@@ -1,6 +1,4 @@
-biosteam==2.41.0
-thermosteam==0.33.0
+biosteam
 pandas
 streamlit
 google-generativeai
-graphviz
