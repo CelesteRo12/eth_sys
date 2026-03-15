@@ -143,4 +143,4 @@ if btn_simular:
         except Exception as ex:
             st.error(f"Error en la simulación: {ex}")
 else:
-    st.info("Ajusta los parámetros y presiona el botón para comenzar.")
+     st.info("Ajusta los parámetros y presiona el botón para comenzar.")
