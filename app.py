@@ -125,7 +125,7 @@ if btn_simular:
                 st.subheader("🤖 Consultoría IA (Tutor de Ingeniería)")
                 try:
                     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-2.5-pro')
                     
                     contexto = f"""
                     Como experto en termodinámica, analiza estos resultados:
