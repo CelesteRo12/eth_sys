@@ -1,5 +1,5 @@
 biosteam==2.41.0
-thermosteam==0.41.0
+thermosteam==0.40.0
 pandas
 streamlit
 google-generativeai
