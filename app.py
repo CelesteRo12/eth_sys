@@ -174,4 +174,4 @@ if btn_run:
             else:
                 st.error("Configura GEMINI_API_KEY en los Secrets.")
 else:
-    st.warning("Configure los sliders y presione 'ACTUALIZAR PROCESO' para ver los resultados e indicadores financieros.")
+    st.warning("Configure los sliders y presione 'SIMULAR PROCESO' para ver los resultados e indicadores financieros.")
