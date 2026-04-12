@@ -1,161 +1,164 @@
 import streamlit as st
-
-# Verificación de entorno e importaciones
-try:
-    import biosteam as bst
-    import thermosteam as tmo
-    import pandas as pd
-    import google.generativeai as genai
-except ImportError as e:
-    st.error(f"Error en librerías: {e}. Revisa tu requirements.txt.")
-    st.stop()
+import biosteam as bst
+import thermosteam as tmo
+import pandas as pd
+import google.generativeai as genai
 
 # =================================================================
-# CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN DE PÁGINA
 # =================================================================
-st.set_page_config(page_title="BioSteam Simulation Hub", layout="wide")
+st.set_page_config(page_title="Planta Etanol ISO v4.0", layout="wide")
 
-st.title("⚗️ Simulador Químico Profesional")
-st.markdown("---")
+st.markdown("""
+    <style>
+    .metric-box {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        border-top: 4px solid #28a745;
+        text-align: center;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+        margin-bottom: 10px;
+    }
+    .metric-title { font-weight: bold; color: #444; font-size: 0.85em; }
+    .metric-value { font-size: 1.25em; color: #000; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
 
 # =================================================================
-# FUNCIÓN DE SIMULACIÓN BIOSTEAM
+# 2. LÓGICA DE SIMULACIÓN (Cálculos Puros)
 # =================================================================
-def simular_proceso(flujo_agua, flujo_etanol, temp_c):
-    # Limpiar flowsheet para evitar conflictos de ID en reruns de Streamlit
+def simular_proceso_iso(t_feed, t_out_w220, p_flash, p_elec, p_steam, p_water, p_mosto, p_etanol):
+    # Reset del flowsheet para evitar duplicidad de equipos
     bst.main_flowsheet.clear()
     
-    # Configuración Termodinámica
+    # Termodinámica
     chemicals = tmo.Chemicals(["Water", "Ethanol"])
     bst.settings.set_thermo(chemicals)
 
-    # Corrientes
-    mosto = bst.Stream("1_MOSTO", Water=flujo_agua, Ethanol=flujo_etanol, units="kg/hr", T=temp_c + 273.15)
-    vinazas_ret = bst.Stream("Retorno", Water=200, T=95+273.15)
+    # Precios (vía configuración de BioSTEAM)
+    bst.settings.electricity_price = p_elec
+    
+    # 2.1 Definición de Corrientes
+    mosto = bst.Stream('Alimentacion', Water=900, Ethanol=100, units='kg/hr', T=t_feed+273.15, price=p_mosto)
+    reciclo = bst.Stream('Reciclo_Vinaza', Water=200, T=95+273.15)
 
-    # Equipos
-    P100 = bst.Pump("P100", ins=mosto, P=4*101325)
-    W210 = bst.HXprocess("W210", ins=(P100-0, vinazas_ret), outs=("Pre", "Drain"), phase0="l", phase1="l")
+    # 2.2 Unidades de Proceso
+    P100 = bst.Pump('P100', ins=mosto, P=4*101325)
+    W210 = bst.HXprocess('W210', ins=(P100-0, reciclo), outs=('S1', 'S2'), phase0='l', phase1='l')
     W210.outs[0].T = 85 + 273.15
-    W220 = bst.HXutility("W220", ins=W210-0, outs="Hot", T=92+273.15)
-    V100 = bst.IsenthalpicValve("V100", ins=W220-0, outs="Mix", P=101325)
-    
-    # Flash Adiabático
-    V1 = bst.Flash("V1", ins=V100-0, outs=("Vapor", "Líquido"), P=101325, Q=0)
-    
-    W310 = bst.HXutility("W310", ins=V1-0, outs="Producto", T=25 + 273.15)
-    P200 = bst.Pump("P200", ins=V1-1, outs=vinazas_ret, P=3*101325)
+    W220 = bst.HXutility('W220', ins=W210-0, outs='S3', T=t_out_w220+273.15)
+    V100 = bst.IsenthalpicValve('V100', ins=W220-0, outs='S4', P=p_flash*101325)
+    V1 = bst.Flash('V1', ins=V100-0, outs=('Vapor', 'Vinazas'), P=p_flash*101325, Q=0)
+    W310 = bst.HXutility('W310', ins=V1-0, outs='Producto_Final', T=25+273.15)
+    P200 = bst.Pump('P200', ins=V1-1, outs=reciclo, P=3*101325)
 
-    # Sistema
-    sys = bst.System("etanol_sys", path=(P100, W210, W220, V100, V1, W310, P200))
+    # 2.3 Simulación del Sistema
+    sys = bst.System('sys_etanol', path=(P100, W210, W220, V100, V1, W310, P200))
     sys.simulate()
-    return sys
     
-    # --- CÁLCULOS TEA (Indicadores Económicos) ---
-    capital = 180000 # Inversión estimada en USD
+    # --- CÁLCULOS FINANCIEROS ---
+    inv_capital = 200000 
+    horas_año = 8000
     
-    # Cálculo manual de costos de utilidad para mayor precisión
-    costo_vapor = (sum([u.utility_cost for u in sys.units])) * 8000 # Simplificado
-    costo_materia_prima = mosto.F_mass * p_mosto * 8000
-    ingresos = W310.F_mass * p_etanol * 8000
+    # Costos operativos (Suma de utilidades y materias primas)
+    costo_utilidades = sum([u.utility_cost for u in sys.units]) * horas_año
+    costo_materia = mosto.F_mass * p_mosto * horas_año
+    ingresos = W310.F_mass * p_etanol * horas_año
     
-    ganancia_anual = ingresos - costo_vapor - costo_materia_prima
-    roi = (ganancia_anual / capital) * 100
-    pb = capital / ganancia_anual if ganancia_anual > 0 else 0
-    npv = sum([ganancia_anual / (1.1**i) for i in range(1, 11)]) - capital
+    flujo_caja = ingresos - costo_utilidades - costo_materia
+    
+    roi = (flujo_caja / inv_capital) * 100
+    pb = inv_capital / flujo_caja if flujo_caja > 0 else 0
+    npv = sum([flujo_caja / (1.1**i) for i in range(1, 11)]) - inv_capital
 
-    return sys, W310, npv, pb, roi, ganancia_anual
+    return sys, W310, npv, pb, roi, flujo_caja
 
 # =================================================================
-# 3. INTERFAZ DE USUARIO (SIDEBAR)
+# 3. INTERFAZ DE USUARIO (Captura de datos)
 # =================================================================
 with st.sidebar:
-    st.header("⚙️ Control de Planta ISO")
+    st.header("⚙️ Parámetros Planta ISO")
     
-    with st.expander("🌡️ Operación", expanded=True):
-        t_feed = st.slider("T Alimentación (°C)", 10.0, 50.0, 25.0)
-        t_w220 = st.slider("T Salida W220 (°C)", 70.0, 110.0, 92.0)
-        p_flash = st.slider("P Separador (atm)", 0.2, 2.0, 1.0)
+    with st.expander("🌡️ Variables de Operación", expanded=True):
+        val_t_feed = st.slider("T Alimentación Mosto (°C)", 10.0, 50.0, 25.0)
+        val_t_w220 = st.slider("T Salida W220 (°C)", 70.0, 110.0, 92.0)
+        val_p_flash = st.slider("P Separador V100 (atm)", 0.2, 2.0, 1.0)
         
-    with st.expander("💸 Precios de Insumos", expanded=True):
-        p_elec = st.slider("Luz (USD/kWh)", 0.05, 0.5, 0.12)
-        p_steam = st.slider("Vapor (USD/ton)", 10.0, 60.0, 30.0)
-        p_water = st.slider("Agua (USD/m3)", 0.1, 5.0, 0.8)
-        p_mosto = st.slider("Mosto (USD/kg)", 0.01, 0.4, 0.06)
-        p_etanol = st.slider("Etanol (USD/kg)", 0.5, 3.0, 1.3)
+    with st.expander("💰 Precios de Mercado", expanded=True):
+        val_p_elec = st.slider("Precio Luz (USD/kWh)", 0.05, 0.5, 0.12)
+        val_p_steam = st.slider("Precio Vapor (USD/ton)", 10.0, 60.0, 30.0)
+        val_p_water = st.slider("Precio Agua (USD/m3)", 0.1, 5.0, 0.8)
+        val_p_mosto = st.slider("Precio Mosto (USD/kg)", 0.01, 0.4, 0.06)
+        val_p_etanol = st.slider("Precio Etanol (USD/kg)", 0.5, 3.0, 1.3)
 
     st.divider()
-    modo_tutor = st.toggle("🎓 Activar Tutor IA")
-    btn_run = st.button("🚀 ACTUALIZAR PROCESO", use_container_width=True)
+    tutor_activo = st.toggle("🎓 Modo Tutor IA")
+    ejecutar = st.button("🚀 ACTUALIZAR PROCESO", use_container_width=True)
 
 # =================================================================
 # 4. DASHBOARD DE RESULTADOS
 # =================================================================
-if btn_run:
-    sys, prod, npv, pb, roi, neta = simular_proceso_iso(t_feed, t_w220, p_flash, p_elec, p_steam, p_water, p_mosto, p_etanol)
-    
-    # 4.1 Recuadros de Producto Final
-    st.subheader("📦 Características del Producto Final")
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.markdown(f"<div class='metric-box'><div class='metric-title'>Presión</div><div class='metric-value'>{prod.P/101325:.2f} atm</div></div>", unsafe_allow_html=True)
-    with m2: st.markdown(f"<div class='metric-box'><div class='metric-title'>Temperatura</div><div class='metric-value'>{prod.T-273.15:.1f} °C</div></div>", unsafe_allow_html=True)
-    with m3: st.markdown(f"<div class='metric-box'><div class='metric-title'>Flujo Másico</div><div class='metric-value'>{prod.F_mass:.1f} kg/h</div></div>", unsafe_allow_html=True)
-    comp_eth = (prod.imass['Ethanol']/prod.F_mass)*100 if prod.F_mass > 0 else 0
-    with m4: st.markdown(f"<div class='metric-box'><div class='metric-title'>Comp. Etanol</div><div class='metric-value'>{comp_eth:.1f} %</div></div>", unsafe_allow_html=True)
+if ejecutar:
+    # Llamada a la función pasándole los VALORES de los sliders, no los sliders mismos
+    sys, prod, npv, pb, roi, neto = simular_proceso_iso(
+        val_t_feed, val_t_w220, val_p_flash, val_p_elec, val_p_steam, val_p_water, val_p_mosto, val_p_etanol
+    )
 
-    # 4.2 Indicadores TEA
+    # 4.1 Métricas de Producto (Recuadros)
+    st.subheader("📦 Propiedades de la Corriente Final")
+    r1, r2, r3, r4 = st.columns(4)
+    with r1: st.markdown(f"<div class='metric-box'><div class='metric-title'>Presión</div><div class='metric-value'>{prod.P/101325:.2f} atm</div></div>", unsafe_allow_html=True)
+    with r2: st.markdown(f"<div class='metric-box'><div class='metric-title'>Temperatura</div><div class='metric-value'>{prod.T-273.15:.1f} °C</div></div>", unsafe_allow_html=True)
+    with r3: st.markdown(f"<div class='metric-box'><div class='metric-title'>Flujo Total</div><div class='metric-value'>{prod.F_mass:.1f} kg/h</div></div>", unsafe_allow_html=True)
+    pureza = (prod.imass['Ethanol']/prod.F_mass)*100 if prod.F_mass > 0 else 0
+    with r4: st.markdown(f"<div class='metric-box'><div class='metric-title'>Comp. Etanol</div><div class='metric-value'>{pureza:.1f} %</div></div>", unsafe_allow_html=True)
+
+    # 4.2 Indicadores Financieros
     st.divider()
-    st.subheader("📊 Análisis Financiero y Rentabilidad")
+    st.subheader("📉 Indicadores de Rentabilidad (TEA)")
     f1, f2, f3, f4 = st.columns(4)
-    f1.metric("Costo Real Prod.", f"{p_mosto * 1.15:.3f} USD/kg")
-    f2.metric("NPV (10 años)", f"{npv/1000:.1f}k USD")
-    f3.metric("Payback", f"{pb:.1f} años")
-    f4.metric("ROI", f"{roi:.1f} %")
+    f1.metric("Costo Producción", f"{(1 - (neto/(prod.F_mass*val_p_etanol*8000)))*val_p_etanol:.3f} USD/kg")
+    f2.metric("NPV (10a)", f"{npv/1000:.1f}k USD")
+    f3.metric("Payback Period", f"{pb:.1f} años")
+    f4.metric("ROI Anual", f"{roi:.1f} %")
 
-    # 4.3 Tablas de Balances
+    # 4.3 Tablas
     st.divider()
-    tab1, tab2 = st.tabs(["Balance de Materia", "Balance de Energía"])
-    with tab1:
-        st.table(pd.DataFrame([{"Corriente": s.ID, "Flujo (kg/h)": round(s.F_mass, 2), "T (°C)": round(s.T-273.15, 1)} for s in sys.streams if s.F_mass > 0]))
-    with tab2:
-        st.table(pd.DataFrame([{"Equipo": u.ID, "Carga Térmica (kW)": round(sum([h.duty for h in u.heat_utilities])/3600, 2)} for u in sys.units]))
+    b1, b2 = st.tabs(["Balance de Masa", "Balance de Energía"])
+    with b1:
+        st.table(pd.DataFrame([{"ID": s.ID, "kg/h": round(s.F_mass, 1), "T(C)": round(s.T-273.15, 1)} for s in sys.streams if s.F_mass > 0.1]))
+    with b2:
+        st.table(pd.DataFrame([{"Unidad": u.ID, "Carga (kW)": round(sum([h.duty for h in u.heat_utilities])/3600, 2)} for u in sys.units]))
 
-    # 4.4 Diagramas ISO (Botones de descarga)
+    # 4.4 Descargas ISO
     st.divider()
     st.subheader("📂 Documentación ISO (AutoCAD Plant 3D)")
     d1, d2 = st.columns(2)
-    d1.download_button("📥 Descargar Diagrama de Bloques (ISO)", data="PDF_DATA", file_name="Diagrama_Bloques_ISO.pdf", use_container_width=True)
-    d2.download_button("📥 Descargar PFD Avanzado (ISO)", data="PDF_DATA", file_name="PFD_Etanol_ISO.pdf", use_container_width=True)
+    d1.download_button("📥 Diagrama de Bloques ISO", data="PDF_BIN", file_name="Bloques_Etanol_ISO.pdf", use_container_width=True)
+    d2.download_button("📥 PFD ISO 14617", data="PDF_BIN", file_name="PFD_Etanol_ISO.pdf", use_container_width=True)
 
     # 4.5 Tutor IA
-    if modo_tutor:
+    if tutor_activo:
         st.divider()
-        st.subheader("💬 Ventana de Diálogo con Tutor IA")
-        
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
+        st.subheader("💬 Consultoría Técnica con IA")
+        if "chat_log" not in st.session_state: st.session_state.chat_log = []
+        for m in st.session_state.chat_log:
+            with st.chat_message(m["role"]): st.markdown(m["content"])
 
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-        if prompt := st.chat_input("¿Cómo puedo optimizar el NPV de esta planta?"):
-            st.session_state.chat_history.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
+        if preg := st.chat_input("Explícame por qué el ROI es bajo..."):
+            st.session_state.chat_log.append({"role": "user", "content": preg})
+            with st.chat_message("user"): st.markdown(preg)
+            
             if "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel('gemini-2.5-pro')
-                
-                context = f"Contexto: Planta de Etanol. ROI: {roi:.1f}%, Pureza: {comp_eth:.1f}%. Usuario pregunta: {prompt}"
-                response = model.generate_content(context)
-                
-                with st.chat_message("assistant"):
-                    st.markdown(response.text)
-                st.session_state.chat_history.append({"role": "assistant", "content": response.text})
+                ctx = f"Planta Etanol. ROI: {roi:.1f}%. Pureza: {pureza:.1f}%. Pregunta: {preg}"
+                res = model.generate_content(ctx)
+                with st.chat_message("assistant"): st.markdown(res.text)
+                st.session_state.chat_log.append({"role": "assistant", "content": res.text})
             else:
-                st.warning("⚠️ Error: Configura tu GEMINI_API_KEY en los Secrets de Streamlit.")
+                st.error("Falta API Key en Secrets.")
 
 else:
-    st.info("💡 Configure los parámetros en el panel lateral y presione 'ACTUALIZAR PROCESO'.")
+    st.info("👈 Use el panel lateral para ajustar la planta y presione el botón para calcular.")
