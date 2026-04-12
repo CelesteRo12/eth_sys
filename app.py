@@ -1,73 +1,55 @@
 import streamlit as st
-import biosteam as bst
-import thermosteam as tmo
-import pandas as pd
-import google.generativeai as genai
+
+# Verificación de entorno e importaciones
+try:
+    import biosteam as bst
+    import thermosteam as tmo
+    import pandas as pd
+    import google.generativeai as genai
+except ImportError as e:
+    st.error(f"Error en librerías: {e}. Revisa tu requirements.txt.")
+    st.stop()
 
 # =================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS
+# CONFIGURACIÓN DE PÁGINA
 # =================================================================
-st.set_page_config(page_title="Planta Etanol ISO v3.0", layout="wide")
+st.set_page_config(page_title="BioSteam Simulation Hub", layout="wide")
 
-st.markdown("""
-    <style>
-    .metric-box {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        border-top: 4px solid #007bff;
-        text-align: center;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-    }
-    .metric-title { font-weight: bold; color: #444; font-size: 0.85em; }
-    .metric-value { font-size: 1.25em; color: #000; font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("⚗️ Simulador Químico Profesional")
+st.markdown("---")
 
 # =================================================================
-# 2. LÓGICA DE SIMULACIÓN (CORRECCIÓN DE ATTRIBUTEERROR)
+# FUNCIÓN DE SIMULACIÓN BIOSTEAM
 # =================================================================
-def simular_proceso_iso(t_feed, t_out_w220, p_flash, p_elec, p_vapor, p_water, p_mosto, p_etanol):
-    # Limpiar flowsheet previo
+def simular_proceso(flujo_agua, flujo_etanol, temp_c):
+    # Limpiar flowsheet para evitar conflictos de ID en reruns de Streamlit
     bst.main_flowsheet.clear()
     
-    # Configurar Termodinámica
+    # Configuración Termodinámica
     chemicals = tmo.Chemicals(["Water", "Ethanol"])
     bst.settings.set_thermo(chemicals)
 
-    # --- CORRECCIÓN DE PRECIOS ---
-    # En BioSTEAM actual, los precios de utilidades se manejan vía bst.settings
-    bst.settings.electricity_price = p_elec
-    
-    # Para el vapor, definimos el costo por flujo de calor en lugar de modificar el agente global
-    # Esto evita el AttributeError: object has no attribute 'price'
-    steam_agent = bst.HeatUtility.get_agent('low_pressure_steam')
-    # El precio en BioSTEAM se asocia al agente, pero si está bloqueado, lo manejamos vía operación
-    
-    # 2.1 Definición de Corrientes
-    mosto = bst.Stream('Alimentacion', Water=900, Ethanol=100, units='kg/hr', T=t_feed+273.15, price=p_mosto)
-    reciclo = bst.Stream('Reciclo_Vinaza', Water=200, T=95+273.15)
+    # Corrientes
+    mosto = bst.Stream("1_MOSTO", Water=flujo_agua, Ethanol=flujo_etanol, units="kg/hr", T=temp_c + 273.15)
+    vinazas_ret = bst.Stream("Retorno", Water=200, T=95+273.15)
 
-    # 2.2 Unidades de Proceso
-    P100 = bst.Pump('P100', ins=mosto, P=4*101325)
-    
-    W210 = bst.HXprocess('W210', ins=(P100-0, reciclo), outs=('S1', 'S2'), phase0='l', phase1='l')
+    # Equipos
+    P100 = bst.Pump("P100", ins=mosto, P=4*101325)
+    W210 = bst.HXprocess("W210", ins=(P100-0, vinazas_ret), outs=("Pre", "Drain"), phase0="l", phase1="l")
     W210.outs[0].T = 85 + 273.15
+    W220 = bst.HXutility("W220", ins=W210-0, outs="Hot", T=92+273.15)
+    V100 = bst.IsenthalpicValve("V100", ins=W220-0, outs="Mix", P=101325)
     
-    W220 = bst.HXutility('W220', ins=W210-0, outs='S3', T=t_out_w220+273.15)
+    # Flash Adiabático
+    V1 = bst.Flash("V1", ins=V100-0, outs=("Vapor", "Líquido"), P=101325, Q=0)
     
-    V100 = bst.IsenthalpicValve('V100', ins=W220-0, outs='S4', P=p_flash*101325)
-    
-    V1 = bst.Flash('V1', ins=V100-0, outs=('Vapor', 'Vinazas'), P=p_flash*101325, Q=0)
-    
-    W310 = bst.HXutility('W310', ins=V1-0, outs='Producto_Final', T=25+273.15)
-    W310.price = p_etanol 
+    W310 = bst.HXutility("W310", ins=V1-0, outs="Producto", T=25 + 273.15)
+    P200 = bst.Pump("P200", ins=V1-1, outs=vinazas_ret, P=3*101325)
 
-    P200 = bst.Pump('P200', ins=V1-1, outs=reciclo, P=3*101325)
-
-    # 2.3 Simulación
-    sys = bst.System('sys_etanol', path=(P100, W210, W220, V100, V1, W310, P200))
+    # Sistema
+    sys = bst.System("etanol_sys", path=(P100, W210, W220, V100, V1, W310, P200))
     sys.simulate()
+    return sys
     
     # --- CÁLCULOS TEA (Indicadores Económicos) ---
     capital = 180000 # Inversión estimada en USD
