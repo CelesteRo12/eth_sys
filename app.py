@@ -50,8 +50,8 @@ def ejecutar_simulacion(f_agua, f_etanol, t_feed, p_elec, p_steam, p_water, p_mo
     sys.simulate()
     
     # Cálculos económicos simples
-    ingresos = W310.F_mass * p_etanol_v
-    costos_op = (sum([u.utility_cost for u in sys.units])) + (mosto.F_mass * p_mosto)
+    ingresos = W310.HXutility * p_etanol_v
+    costos_op = (sum([u.utility_cost for u in sys.units])) + (mosto.HXutility * p_mosto)
     margen = ingresos - costos_op
 
     return sys, W310, margen
