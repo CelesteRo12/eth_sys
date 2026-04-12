@@ -124,7 +124,7 @@ with st.sidebar:
 
     st.divider()
     modo_tutor = st.toggle("🎓 Habilitar Tutor Inteligente IA")
-    btn_run = st.button("🚀 ACTUALIZAR PROCESO", use_container_width=True)
+    btn_run = st.button("🚀 SIMULAR PROCESO", use_container_width=True)
 
 # =================================================================
 # 4. CUERPO PRINCIPAL
