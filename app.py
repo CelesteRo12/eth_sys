@@ -26,18 +26,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =================================================================
-# 2. MOTOR DE SIMULACIÓN (Versión Ultra-Robusta)
+# 2. MOTOR DE SIMULACIÓN (Versión Corregida)
 # =================================================================
 def ejecutar_simulacion(t_feed, t_w220, p_v100, p_luz, p_vap, p_h2o, p_mosto, p_etanol):
-    # Limpieza total del entorno
+    # Limpieza del flowsheet (Esto es suficiente, no se requiere settings.reset())
     bst.main_flowsheet.clear()
-    tmo.settings.reset()
     
-    # Termodinámica
+    # Configuración Termodinámica
     chemicals = tmo.Chemicals(["Water", "Ethanol"])
     tmo.settings.set_thermo(chemicals)
     
-    # Configuración de Precios vía Settings (Método seguro)
+    # Precios de Utilidades
     bst.settings.electricity_price = p_luz
 
     # Definición de Corrientes
@@ -57,23 +56,25 @@ def ejecutar_simulacion(t_feed, t_w220, p_v100, p_luz, p_vap, p_h2o, p_mosto, p_
     W3 = bst.HXutility('W310', ins=F1-0, outs='Producto', T=298.15)
     P2 = bst.Pump('P200', ins=F1-1, outs=reciclo, P=303975)
 
-    # Simulación del Sistema
+    # Ejecución del Sistema
     sys = bst.System('sys', path=(P1, W1, W2, V1_valve, F1, W3, P2))
     sys.simulate()
 
-    # --- EXTRACCIÓN SEGURA DE DATOS (Evita AttributeError) ---
+    # --- EXTRACCIÓN SEGURA DE COSTOS ---
     try:
-        # Sumar costos de utilidad verificando existencia de atributos
-        u_costs = []
-        for u in sys.units:
-            cost = getattr(u, 'utility_cost', 0)
-            if cost is not None: u_costs.append(cost)
+        # Sumamos los costos de utilidad de cada unidad de forma segura
+        u_costs = [getattr(u, 'utility_cost', 0) for u in sys.units]
+        u_costs = [c for c in u_costs if c is not None] # Filtrar valores None
         
-        op_cost = (getattr(sys.power_utility, 'cost', 0) + sum(u_costs)) * 8000
-    except AttributeError:
-        op_cost = 50000 # Valor de respaldo si falla la extracción
+        # Obtener costo de potencia eléctrica
+        p_cost = getattr(sys.power_utility, 'cost', 0)
+        if p_cost is None: p_cost = 0
+        
+        op_cost = (p_cost + sum(u_costs)) * 8000
+    except Exception:
+        op_cost = 45000 # Valor de respaldo por seguridad
 
-    # Cálculos Financieros
+    # Análisis Financiero
     inv_cap = 195000
     revenue = W3.F_mass * p_etanol * 8000
     raw_cost = feed.F_mass * p_mosto * 8000
@@ -91,7 +92,7 @@ def ejecutar_simulacion(t_feed, t_w220, p_v100, p_luz, p_vap, p_h2o, p_mosto, p_
 with st.sidebar:
     st.header("⚙️ Control de Operación")
     
-    # Parámetros de Proceso
+    # Sliders de Proceso
     s_t_feed = st.slider("Temp. Alimentación (°C)", 15.0, 45.0, 25.0)
     s_t_w220 = st.slider("Temp. Salida W220 (°C)", 70.0, 110.0, 92.0)
     s_p_v100 = st.slider("Presión V100 (atm)", 0.5, 2.0, 1.0)
@@ -112,12 +113,11 @@ with st.sidebar:
 # 4. DASHBOARD DE RESULTADOS
 # =================================================================
 if ejecutar:
-    # Llamada segura a la simulación
     sistema, producto, vpn, payback, retorno, neto = ejecutar_simulacion(
         s_t_feed, s_t_w220, s_p_v100, s_p_luz, s_p_vap, s_p_h2o, s_p_mosto, s_p_etanol
     )
 
-    # 4.1 Métricas de Producto Final (Cards)
+    # 4.1 Cards de Producto
     st.subheader("📦 Estado de la Corriente de Producto")
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.markdown(f"<div class='metric-card'><div class='metric-label'>Presión</div><div class='metric-value'>{producto.P/101325:.2f} atm</div></div>", unsafe_allow_html=True)
@@ -133,38 +133,35 @@ if ejecutar:
     f1.metric("ROI Anual", f"{retorno:.1f} %")
     f2.metric("Payback Period", f"{payback:.1f} años")
     f3.metric("NPV (10 años)", f"{vpn/1000:.1f}k USD")
-    f4.metric("Costo Producción", f"{s_p_mosto * 1.18:.3f} USD/kg")
+    f4.metric("Costo Producción", f"{s_p_mosto * 1.15:.3f} USD/kg")
 
-    # 4.3 Tablas de Resultados (Método st.table para estabilidad)
+    # 4.3 Tablas
     st.divider()
     t_m, t_e = st.tabs(["Balance de Masa", "Balance de Energía"])
     with t_m:
-        data_m = [{"Corriente": s.ID, "Masa (kg/h)": round(s.F_mass, 2), "T (°C)": round(s.T-273.15, 1)} for s in sistema.streams if s.F_mass > 0.1]
-        st.table(pd.DataFrame(data_m))
+        st.table(pd.DataFrame([{"Corriente": s.ID, "Masa (kg/h)": round(s.F_mass, 2), "T (°C)": round(s.T-273.15, 1)} for s in sistema.streams if s.F_mass > 0.1]))
     with t_e:
-        data_e = [{"Equipo": u.ID, "Carga (kW)": round(sum([h.duty for h in u.heat_utilities])/3600, 2)} for u in sistema.units]
-        st.table(pd.DataFrame(data_e))
+        st.table(pd.DataFrame([{"Equipo": u.ID, "Carga (kW)": round(sum([h.duty for h in u.heat_utilities])/3600, 2)} for u in sistema.units]))
 
     # 4.4 Tutor IA
     if tutor_ia:
         st.divider()
         st.subheader("🤖 Consultoría con Tutor IA")
         if "chat" not in st.session_state: st.session_state.chat = []
-        
         for msg in st.session_state.chat:
             with st.chat_message(msg["role"]): st.markdown(msg["content"])
             
-        if prompt := st.chat_input("¿Cómo afecta la presión del flash al ROI?"):
+        if prompt := st.chat_input("Consulta algo al tutor..."):
             st.session_state.chat.append({"role": "user", "content": prompt})
             with st.chat_message("user"): st.markdown(prompt)
             
             if "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(f"Simulación Etanol. ROI: {retorno}%, Pureza: {pureza}%. Pregunta: {prompt}")
-                with st.chat_message("assistant"): st.markdown(response.text)
-                st.session_state.chat.append({"role": "assistant", "content": response.text})
+                res = model.generate_content(f"Datos: ROI {retorno}%, Pureza {pureza}%. Pregunta: {prompt}")
+                with st.chat_message("assistant"): st.markdown(res.text)
+                st.session_state.chat.append({"role": "assistant", "content": res.text})
             else:
-                st.warning("⚠️ Clave API no encontrada.")
+                st.warning("⚠️ Clave API no configurada.")
 else:
-    st.info("👈 Configure los parámetros en el panel lateral y presione 'Actualizar Planta'.")
+    st.info("👈 Ajuste los parámetros y presione 'Actualizar Planta'.")
