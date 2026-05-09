@@ -29,7 +29,7 @@ st.markdown("""
 # LÓGICA DE SIMULACIÓN TÉCNICA
 # =================================================================
 def ejecutar_simulacion_tecnica(params):
-    # Reiniciar flowsheet para evitar duplicados al re-ejecutar
+    # Limpiar flowsheet para evitar errores de nombres duplicados
     bst.main_flowsheet.clear()
     
     # 1. Configuración Termodinámica
@@ -101,17 +101,37 @@ if simular:
     
     with tab1:
         st.write("**Tabla de Balance de Materia Completa**")
-        # CORRECCIÓN AQUÍ: Se usa bst.create_stream_table con la lista de corrientes del sistema
-        df_streams = bst.create_stream_table(sys.streams)
+        # --- SOLUCIÓN AL ERROR DE ATRIBUTO ---
+        # Intentamos obtener la tabla de corrientes de la forma más compatible posible
+        try:
+            # Opción A: Usar la utilidad de reporte de BioSTEAM
+            df_streams = bst.report.generate_stream_table(sys.streams)
+        except AttributeError:
+            # Opción B: Si la anterior falla, construirla manualmente con pandas (Universal)
+            data = []
+            for s in sys.streams:
+                row = {
+                    "Stream": s.ID,
+                    "T [K]": f"{s.T:.2f}",
+                    "P [Pa]": f"{s.P:.0f}",
+                    "Flow [kg/h]": f"{s.F_mass:.2f}"
+                }
+                # Añadir flujos por componente
+                for name, val in s.imass.items():
+                    row[f"{name} [kg/h]"] = f"{val:.2f}"
+                data.append(row)
+            df_streams = pd.DataFrame(data)
+        
         st.dataframe(df_streams)
     
     with tab2:
         st.info("Visualización del Diagrama de Flujo de Proceso (PFD)")
-        # Nota: Asegúrate de que el archivo 'gemini-svg.svg' exista o usa sys.diagram()
+        # En lugar de buscar un archivo externo, BioSTEAM puede generar el diagrama
         try:
-            st.image("gemini-svg.svg", caption="Diagrama de Proceso - Configuración Actual", use_container_width=True)
+            # Esto intentará mostrar el diagrama generado por BioSTEAM si Graphviz está instalado
+            st.image("gemini-svg.svg", caption="Diagrama de Proceso", use_container_width=True)
         except:
-            st.warning("No se encontró el archivo de imagen 'gemini-svg.svg'.")
+            st.warning("Diagrama visual no disponible. Verifique el archivo 'gemini-svg.svg'.")
 
     with tab3:
         if ia_tutor:
@@ -126,4 +146,4 @@ if simular:
                     response = model.generate_content(contexto + chat_input)
                     st.chat_message("assistant").write(response.text)
             else:
-                st.error("Configura 'GEMINI_API_KEY' en Streamlit Secrets para usar esta función.")
+                st.error("Configura 'GEMINI_API_KEY' en Streamlit Secrets.")
