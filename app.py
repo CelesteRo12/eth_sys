@@ -130,7 +130,7 @@ if ejecutar:
         with t2:
             if ia_tutor and "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel('gemini-2.5-pro')
                 prompt = f"Explica como tutor de ingeniería: NPV={tea.NPV}, MPSP={tea.solve_price(prod)}. ¿Es rentable?"
                 response = model.generate_content(prompt)
                 st.info(response.text)
