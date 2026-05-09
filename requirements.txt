@@ -1,6 +1,5 @@
-biosteam==3.0.1
-thermosteam==0.32.0
-streamlit==1.31.0
-pandas==2.1.4
-numpy==1.26.4
-google-generativeai==0.4.1
+biosteam>=2.41.0
+thermosteam>=0.41.0
+streamlit
+google-generativeai
+pandas
