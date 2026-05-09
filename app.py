@@ -1,177 +1,267 @@
-import streamlit as st
-import biosteam as bst
-import thermosteam as tmo
-import pandas as pd
-import google.generativeai as genai
-import base64
+ import streamlit as st
+
+
+
+# Verificación de entorno e importaciones
+
+try:
+
+    import biosteam as bst
+
+    import thermosteam as tmo
+
+    import pandas as pd
+
+    import google.generativeai as genai
+
+except ImportError as e:
+
+    st.error(f"Error en librerías: {e}. Revisa tu requirements.txt.")
+
+    st.stop()
+
+
 
 # =================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS
+
+# CONFIGURACIÓN DE PÁGINA
+
 # =================================================================
+
 st.set_page_config(page_title="BioSteam Simulation Hub", layout="wide")
 
-# Estilo para los recuadros de métricas
-st.markdown("""
-    <style>
-    .metric-box {
-        background-color: #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #000080;
-        margin-bottom: 10px;
-    }
-    </style>
-    """, unsafe_allow_stdio=True)
+
+
+st.title("⚗️ Simulador Químico Profesional")
+
+st.markdown("---")
+
+
 
 # =================================================================
-# 2. FUNCIONES DE APOYO
-# =================================================================
-def get_pdf_display(pdf_file):
-    with open(pdf_file, "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-    return f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf">'
+
+# FUNCIÓN DE SIMULACIÓN BIOSTEAM
 
 # =================================================================
-# 3. LÓGICA DE SIMULACIÓN (BIOSTEAM)
-# =================================================================
-def simular_proceso(flujo_agua, flujo_etanol, temp_fed, temp_w220, pres_v100):
+
+def simular_proceso(flujo_agua, flujo_etanol, temp_c):
+
+    # Limpiar flowsheet para evitar conflictos de ID en reruns de Streamlit
+
     bst.main_flowsheet.clear()
+
+    
+
+    # Configuración Termodinámica
+
     chemicals = tmo.Chemicals(["Water", "Ethanol"])
+
     bst.settings.set_thermo(chemicals)
 
+
+
     # Corrientes
-    mosto = bst.Stream("1_MOSTO", Water=flujo_agua, Ethanol=flujo_etanol, units="kg/hr", T=temp_fed + 273.15)
+
+    mosto = bst.Stream("1_MOSTO", Water=flujo_agua, Ethanol=flujo_etanol, units="kg/hr", T=temp_c + 273.15)
+
     vinazas_ret = bst.Stream("Retorno", Water=200, T=95+273.15)
 
+
+
     # Equipos
+
     P100 = bst.Pump("P100", ins=mosto, P=4*101325)
+
     W210 = bst.HXprocess("W210", ins=(P100-0, vinazas_ret), outs=("Pre", "Drain"), phase0="l", phase1="l")
+
     W210.outs[0].T = 85 + 273.15
+
+    W220 = bst.HXutility("W220", ins=W210-0, outs="Hot", T=92+273.15)
+
+    V100 = bst.IsenthalpicValve("V100", ins=W220-0, outs="Mix", P=101325)
+
     
-    # Slider 2: Temperatura de salida W220
-    W220 = bst.HXutility("W220", ins=W210-0, outs="Hot", T=temp_w220 + 273.15)
+
+    # Flash Adiabático
+
+    V1 = bst.Flash("V1", ins=V100-0, outs=("Vapor", "Líquido"), P=101325, Q=0)
+
     
-    # Slider 3: Presión del separador (Valve + Flash)
-    V100 = bst.IsenthalpicValve("V100", ins=W220-0, outs="Mix", P=pres_v100)
-    V1 = bst.Flash("V1", ins=V100-0, outs=("Vapor", "Líquido"), P=pres_v100, Q=0)
-    
+
     W310 = bst.HXutility("W310", ins=V1-0, outs="Producto", T=25 + 273.15)
+
     P200 = bst.Pump("P200", ins=V1-1, outs=vinazas_ret, P=3*101325)
 
+
+
+    # Sistema
+
     sys = bst.System("etanol_sys", path=(P100, W210, W220, V100, V1, W310, P200))
+
     sys.simulate()
-    return sys, W310.outs[0]
+
+    return sys
+
+
 
 # =================================================================
-# 4. INTERFAZ LATERAL (CONTROL)
+
+# INTERFAZ DE USUARIO
+
 # =================================================================
+
 with st.sidebar:
-    st.header("⚙️ Parámetros de Proceso")
-    
-    # Requerimientos 1, 2 y 3: Sliders
-    temp_fed = st.slider("1. Temp. Alimentación Mosto (°C)", 10.0, 60.0, 25.0)
-    temp_w220 = st.slider("2. Temp. Salida W220 (°C)", 70.0, 110.0, 92.0)
-    pres_v100 = st.slider("3. Presión Separador V100 (Pa)", 50000.0, 200000.0, 101325.0)
-    
-    st.divider()
-    agua = st.number_input("Flujo Agua (kg/h)", 500, 1500, 900)
-    etanol = st.number_input("Flujo Etanol (kg/h)", 10, 500, 100)
-    
-    st.divider()
-    modo_tutor = st.toggle("👨‍🏫 Habilitar Modo Tutor IA")
-    ejecutar = st.button("🚀 Ejecutar Simulación", use_container_width=True)
 
-# =================================================================
-# 5. CUERPO PRINCIPAL / RESULTADOS
-# =================================================================
-st.title("⚗️ Planta de Bio-Procesos Inteligente")
+    st.header("⚙️ Configuración")
+
+    agua = st.number_input("Agua (kg/h)", 500, 1500, 900)
+
+    etanol = st.number_input("Etanol (kg/h)", 10, 500, 100)
+
+    temp = st.slider("Temperatura (°C)", 10, 50, 25)
+
+    st.markdown("---")
+
+    ejecutar = st.button("🚀 Simular Proceso", use_container_width=True)
+
+
 
 if ejecutar:
-    with st.spinner("Simulando..."):
-        planta, prod = simular_proceso(agua, etanol, temp_fed, temp_w220, pres_v100)
-        
-        # Requerimiento 10: Recuadros de Producto Final e Indicadores
-        st.subheader("📦 Estado del Producto Final y Economía")
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.markdown(f"<div class='metric-box'><b>Presión:</b><br>{prod.P/101325:.2f} atm</div>", unsafe_allow_html=True)
-        with m2:
-            st.markdown(f"<div class='metric-box'><b>Temperatura:</b><br>{prod.T-273.15:.2f} °C</div>", unsafe_allow_html=True)
-        with m3:
-            st.markdown(f"<div class='metric-box'><b>Flujo Másico:</b><br>{prod.F_mass:.2f} kg/h</div>", unsafe_allow_html=True)
-        with m4:
-            st.markdown(f"<div class='metric-box'><b>Composición Etanol:</b><br>{prod.imass['Ethanol']/prod.F_mass*100:.1f} %</div>", unsafe_allow_html=True)
 
-        e1, e2, e3, e4 = st.columns(4)
-        # Valores simulados para el ejemplo (aquí conectarías con bst.TEA)
-        with e1: st.metric("Costo Real", "$0.85 /kg")
-        with e2: st.metric("Venta Sugerida", "$1.20 /kg")
-        with e3: st.metric("NPV", "$1.2M")
-        with e4: st.metric("ROI / Payback", "15% / 3.2 años")
+    with st.spinner("Ejecutando cálculos termodinámicos..."):
 
-        # Requerimiento 9: Tablas de Balances
-        st.divider()
-        st.subheader("📋 Balances de Materia y Energía")
-        col_mat, col_en = st.columns(2)
-        with col_mat:
-            st.write("**Balance de Materia**")
-            data_m = [{"Corriente": s.ID, "Flujo [kg/h]": s.F_mass} for s in planta.streams if s.F_mass > 0]
-            st.dataframe(pd.DataFrame(data_m), use_container_width=True)
-        with col_en:
-            st.write("**Balance de Energía**")
-            data_e = [{"Equipo": u.ID, "Calor [kJ/h]": u.design_results.get('Heat duty', 0)} for u in planta.units]
-            st.dataframe(pd.DataFrame(data_e), use_container_width=True)
+        try:
 
-        # Requerimientos 11 y 12: Diagramas ISO (PDF)
-        st.divider()
-        tab1, tab2 = st.tabs(["📐 Diagrama de Bloques (ISO)", "🏗️ PFD Proceso (ISO)"])
-        with tab1:
-            st.info("Cargue su archivo 'diagrama_bloques.pdf' exportado de AutoCAD Plant 3D")
-            # st.markdown(get_pdf_display("diagrama_bloques.pdf"), unsafe_allow_html=True)
-        with tab2:
-            st.info("Cargue su archivo 'pfd_proceso.pdf' exportado de AutoCAD Plant 3D")
-            # st.markdown(get_pdf_display("pfd_proceso.pdf"), unsafe_allow_html=True)
+            planta = simular_proceso(agua, etanol, temp)
 
-        # Requerimientos 13, 14 y 15: Tutor IA con Gemini
-        if modo_tutor:
-            st.divider()
-            st.subheader("🤖 Tutoría Especializada con IA")
+            st.success("Simulación finalizada exitosamente.")
+
+
+
+            # 1. Diagrama de Flujo (Graphviz - No usa Altair)
+
+            st.subheader("📊 Esquema del Proceso")
+
+            try:
+
+                dot_source = planta.diagram(format='dot', display=False)
+
+                st.graphviz_chart(dot_source)
+
+            except:
+
+                st.warning("Diagrama no disponible en este momento.")
+
+
+
+            # 2. Tablas de Resultados (st.table es ANTI-ERRORES de Altair)
+
+            st.subheader("📋 Balances Finales")
+
+            col1, col2 = st.columns(2)
+
             
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
 
-            # Ventana de contexto (Chat)
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+            with col1:
 
-            if prompt := st.chat_input("Pregúntale al tutor sobre los resultados..."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
+                st.write("**Materia**")
+
+                res_m = []
+
+                for s in planta.streams:
+
+                    if s.F_mass > 0.1:
+
+                        res_m.append({
+
+                            "Corriente": s.ID,
+
+                            "kg/h": round(s.F_mass, 1),
+
+                            "T (°C)": round(s.T - 273.15, 1)
+
+                        })
+
+                # Usamos st.table para evitar conflictos con el motor de Altair/VegaLite
+
+                st.table(pd.DataFrame(res_m))
+
+
+
+            with col2:
+
+                st.write("**Energía**")
+
+                res_e = []
+
+                for u in planta.units:
+
+                    q_kw = sum([h.duty for h in u.heat_utilities]) / 3600
+
+                    p_kw = u.power_utility.rate if u.power_utility else 0
+
+                    if abs(q_kw) > 0.01 or p_kw > 0.01:
+
+                        res_e.append({
+
+                            "Equipo": u.ID,
+
+                            "Calor (kW)": round(q_kw, 2),
+
+                            "Potencia (kW)": round(p_kw, 2)
+
+                        })
+
+                st.table(pd.DataFrame(res_e))
+
+
+
+            # 3. Tutor IA (Gemini)
+
+            if "GEMINI_API_KEY" in st.secrets:
+
+                st.divider()
+
+                st.subheader("🤖 Análisis del Tutor IA")
 
                 try:
-                    # Configuración Gemini (Requerimiento 13)
+
                     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
                     model = genai.GenerativeModel('gemini-2.5-pro')
+
                     
-                    # Contexto técnico para la IA
-                    contexto = f"""
-                    Eres un tutor de ingeniería química. El proceso actual tiene:
-                    - Temp. alimentación: {temp_fed}°C
-                    - Presión V100: {pres_v100} Pa
-                    - Composición final: {prod.imass['Ethanol']/prod.F_mass*100:.1f}% etanol.
-                    Responde de forma educativa.
+
+                    prompt = f"""
+
+                    Como experto en ingeniería de procesos, analiza estos datos:
+
+                    MATERIA: {res_m}
+
+                    ENERGÍA: {res_e}
+
+                    Resume en 3 puntos la eficiencia del proceso y da una recomendación técnica.
+
                     """
-                    
-                    response = model.generate_content([contexto, prompt])
-                    full_response = response.text
-                    
-                    with st.chat_message("assistant"):
-                        st.markdown(full_response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+                    response = model.generate_content(prompt)
+
+                    st.info(response.text)
+
                 except Exception as e:
-                    st.error("Configura GEMINI_API_KEY en Streamlit Secrets para usar el tutor.")
+
+                    st.error(f"Error en IA: {e}")
+
+            else:
+
+                st.warning("IA: Registra tu GEMINI_API_KEY en los Secrets de Streamlit para el análisis.")
+
+
+
+        except Exception as ex:
+
+            st.error(f"Error técnico: {ex}")
 
 else:
-    st.info("Configure los parámetros en el panel izquierdo y haga clic en 'Ejecutar Simulación'.")
+
+    st.info("Ajusta los parámetros y presiona 'Simular Proceso'.")
