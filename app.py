@@ -29,7 +29,7 @@ st.markdown("""
 # LÓGICA DE SIMULACIÓN TÉCNICA
 # =================================================================
 def ejecutar_simulacion_tecnica(params):
-    # Limpiar flowsheet para evitar errores de nombres duplicados
+    # Limpiar flowsheet para evitar conflictos de nombres
     bst.main_flowsheet.clear()
     
     # 1. Configuración Termodinámica
@@ -54,7 +54,7 @@ def ejecutar_simulacion_tecnica(params):
     sys = bst.System('sys_proceso', path=(P100, W220, V100))
     sys.simulate()
     
-    return sys, V100.outs[0]
+    return sys, V100.outs[0], chems
 
 # =================================================================
 # INTERFAZ DE USUARIO (OPERACIÓN)
@@ -81,7 +81,7 @@ if simular:
         'p_v100': p_v100
     }
     
-    sys, prod = ejecutar_simulacion_tecnica(params)
+    sys, prod, chems = ejecutar_simulacion_tecnica(params)
     
     # 1. Indicadores de Corriente de Salida
     st.subheader("🎯 Resultados de la Corriente de Vapor")
@@ -93,7 +93,8 @@ if simular:
     with c3: 
         st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo Másico</div><div class="metric-value">{prod.F_mass:.1f} kg/h</div></div>', unsafe_allow_html=True)
     with c4: 
-        pureza = (prod.imass["Ethanol"]/prod.F_mass*100) if prod.F_mass > 0 else 0
+        # Cálculo de pureza usando el índice del componente directamente
+        pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
         st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{pureza:.1f} %</div></div>', unsafe_allow_html=True)
 
     # 2. Análisis y Visualización
@@ -101,37 +102,33 @@ if simular:
     
     with tab1:
         st.write("**Tabla de Balance de Materia Completa**")
-        # --- SOLUCIÓN AL ERROR DE ATRIBUTO ---
-        # Intentamos obtener la tabla de corrientes de la forma más compatible posible
-        try:
-            # Opción A: Usar la utilidad de reporte de BioSTEAM
-            df_streams = bst.report.generate_stream_table(sys.streams)
-        except AttributeError:
-            # Opción B: Si la anterior falla, construirla manualmente con pandas (Universal)
-            data = []
-            for s in sys.streams:
-                row = {
-                    "Stream": s.ID,
-                    "T [K]": f"{s.T:.2f}",
-                    "P [Pa]": f"{s.P:.0f}",
-                    "Flow [kg/h]": f"{s.F_mass:.2f}"
-                }
-                # Añadir flujos por componente
-                for name, val in s.imass.items():
-                    row[f"{name} [kg/h]"] = f"{val:.2f}"
-                data.append(row)
-            df_streams = pd.DataFrame(data)
         
-        st.dataframe(df_streams)
+        # --- SOLUCIÓN ROBUSTA AL ERROR DE IMASS.ITEMS() ---
+        data = []
+        # Obtenemos la lista de IDs de los químicos definidos
+        chemical_ids = [c.ID for c in chems]
+        
+        for s in sys.streams:
+            row = {
+                "Stream": s.ID,
+                "T [°C]": f"{s.T - 273.15:.2f}",
+                "P [atm]": f"{s.P / 101325:.2f}",
+                "Total [kg/h]": f"{s.F_mass:.2f}"
+            }
+            # Accedemos a cada componente por su ID en lugar de usar .items()
+            for cid in chemical_ids:
+                row[f"{cid} [kg/h]"] = f"{s.imass[cid]:.2f}"
+            data.append(row)
+        
+        df_streams = pd.DataFrame(data)
+        st.dataframe(df_streams, use_container_width=True)
     
     with tab2:
         st.info("Visualización del Diagrama de Flujo de Proceso (PFD)")
-        # En lugar de buscar un archivo externo, BioSTEAM puede generar el diagrama
         try:
-            # Esto intentará mostrar el diagrama generado por BioSTEAM si Graphviz está instalado
             st.image("gemini-svg.svg", caption="Diagrama de Proceso", use_container_width=True)
         except:
-            st.warning("Diagrama visual no disponible. Verifique el archivo 'gemini-svg.svg'.")
+            st.warning("Diagrama visual 'gemini-svg.svg' no encontrado.")
 
     with tab3:
         if ia_tutor:
