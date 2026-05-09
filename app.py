@@ -154,7 +154,7 @@ if simular:
             # Configuración de Gemini
             if "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel('gemini-2.5-pro')
                 
                 chat_input = st.text_input("Pregunta al Tutor IA sobre los resultados:")
                 if chat_input:
