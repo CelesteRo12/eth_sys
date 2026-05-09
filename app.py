@@ -10,7 +10,6 @@ from thermosteam import Chemicals, Stream, settings
 # =================================================================
 st.set_page_config(page_title="BioSTEAM Process Simulation", layout="wide")
 
-# Estilo personalizado para recuadros de resultados
 st.markdown("""
     <style>
     .metric-card {
@@ -30,8 +29,10 @@ st.markdown("""
 # LÓGICA DE SIMULACIÓN TÉCNICA
 # =================================================================
 def ejecutar_simulacion_tecnica(params):
-    # 1. Configuración Termodinámica
+    # Reiniciar flowsheet para evitar duplicados al re-ejecutar
     bst.main_flowsheet.clear()
+    
+    # 1. Configuración Termodinámica
     chems = Chemicals(['Water', 'Ethanol'])
     settings.set_thermo(chems)
     
@@ -100,12 +101,17 @@ if simular:
     
     with tab1:
         st.write("**Tabla de Balance de Materia Completa**")
-        st.dataframe(sys.get_stream_table())
+        # CORRECCIÓN AQUÍ: Se usa bst.create_stream_table con la lista de corrientes del sistema
+        df_streams = bst.create_stream_table(sys.streams)
+        st.dataframe(df_streams)
     
     with tab2:
         st.info("Visualización del Diagrama de Flujo de Proceso (PFD)")
-        # Simulación de visualización
-        st.image("gemini-svg.svg", caption="Diagrama de Proceso - Configuración Actual", use_column_width=True)
+        # Nota: Asegúrate de que el archivo 'gemini-svg.svg' exista o usa sys.diagram()
+        try:
+            st.image("gemini-svg.svg", caption="Diagrama de Proceso - Configuración Actual", use_container_width=True)
+        except:
+            st.warning("No se encontró el archivo de imagen 'gemini-svg.svg'.")
 
     with tab3:
         if ia_tutor:
