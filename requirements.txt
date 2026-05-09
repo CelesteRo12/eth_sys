@@ -1,5 +1,5 @@
-biosteam>=2.41.0
-thermosteam>=0.41.0
+biosteam>=2.46.1
+thermosteam>=0.46.1
 pandas
 streamlit>=1.31.0
 altair>=5.0.0
