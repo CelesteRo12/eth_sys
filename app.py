@@ -2,7 +2,16 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import google.generativeai as genai
-import biosteam as bst  # Importación directa corregida
+import biosteam as bst
+from biosteam import System
+from biosteam import Stream
+from biosteam import settings
+from biosteam import Chemical
+from biosteam import Chemicals
+from biosteam import units
+from biosteam import main_flowsheet
+from biosteam import TEA
+from biosteam import ConventionalTEA 
 from thermosteam import Chemicals, Stream, settings
 
 # =================================================================
@@ -29,8 +38,8 @@ st.markdown("""
 # LÓGICA DE SIMULACIÓN Y TEA (CORREGIDA)
 # =================================================================
 def ejecutar_modelo_completo(params):
-    bst.main_flowsheet.clear()
-    chems = Chemicals(['Water', 'Ethanol'])
+    main_flowsheet.clear()
+    chems = bst.Chemicals(['Water', 'Ethanol'])
     settings.set_thermo(chems)
     
     # Precios de servicios (Utilities)
@@ -55,24 +64,32 @@ def ejecutar_modelo_completo(params):
     
     # Configuración de TEA (Basada en Parámetros de Biosteam TEA Guide)
     # Se eliminó la dependencia de biosteam.evaluation.TEA
-    tea = bst.TEA(
-        system=sys,
-        IRR=0.15,                           # Tasa deseada
-        duration=(2026, 2046),              # Horizonte temporal
-        depreciation='MACRS7',              # Estándar industrial
-        construction_schedule=(0.5, 0.5),   # Cronograma de 2 años
-        startup_months=3,                   # Tiempo de arranque
-        operating_days=330,                 # Tiempo efectivo anual
-        income_tax=0.30,                    # Tasa impositiva
-        lang_factor=4.0,                    # Factor de instalación
-        startup_FOCfrac=0.5,                
-        startup_VOCfrac=0.5,                
-        startup_salesfrac=0.5,              
-        WC_over_FCI=0.05,                   # Capital de trabajo
-        finance_interest=0.0,               
-        finance_years=0,                    
-        finance_fraction=0.0                
-    )
+    tea = ConventionalTEA(
+    system=sys,
+    IRR=0.15,
+    duration=(2026, 2046),
+    depreciation='MACRS7',
+    income_tax=0.30,
+    operating_days=330,
+    
+    # Capital e instalación
+    lang_factor=4.0,
+    construction_schedule=(0.5, 0.5),
+    startup_months=3,
+    
+    # Costos operativos
+    startup_FOCfrac=0.5,
+    startup_VOCfrac=0.5,
+    startup_salesfrac=0.5,
+    
+    # Capital de trabajo
+    WC_over_FCI=0.05,
+    
+    # Financiamiento
+    finance_interest=0.0,
+    finance_years=0,
+    finance_fraction=0.0
+)
     
     return sys, tea, V100.outs[0]
 
