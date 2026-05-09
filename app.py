@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import google.generativeai as genai
-import biosteam as bst  # Importación directa corregida
+import biosteam as bst
 from thermosteam import Chemicals, Stream, settings
 
 # =================================================================
@@ -26,58 +26,60 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =================================================================
-# LÓGICA DE SIMULACIÓN Y TEA (CORREGIDA)
+# LÓGICA DE SIMULACIÓN Y TEA
 # =================================================================
 def ejecutar_modelo_completo(params):
+    # Limpieza de flowsheet para evitar duplicidad de IDs en cada ejecución
     bst.main_flowsheet.clear()
+    
+    # Configuración Termodinámica
     chems = Chemicals(['Water', 'Ethanol'])
     settings.set_thermo(chems)
     
-    # Precios de servicios (Utilities)
+    # Precios de servicios
     settings.electricity_price = params['p_luz']
     
-    # Corriente de entrada
+    # Corrientes
     mosto = Stream('mosto', Water=900, Ethanol=100, units='kg/hr', 
                    T=params['t_mosto'] + 273.15, price=params['p_mosto'])
     
-    # Diseño de Equipos
+    # Equipos
     P100 = bst.Pump('P100', ins=mosto, P=4*101325)
     W220 = bst.HXutility('W220', ins=P100-0, T=params['t_w220'] + 273.15)
     V100 = bst.Flash('V100', ins=W220-0, outs=('vapor_prod', 'liquido_residuo'), 
                      P=params['p_v100'], Q=0)
     
-    # Creación y Simulación del Sistema
+    # Sistema
     sys = bst.System('sys_etanol', path=(P100, W220, V100))
     sys.simulate()
     
-    # Asignación de precio al producto para cálculo de ventas
+    # Precio de venta para ingresos anuales
     V100.outs[0].price = params['p_etanol']
     
-    # Configuración de TEA (Basada en Parámetros de Biosteam TEA Guide)
-    # Se eliminó la dependencia de biosteam.evaluation.TEA
+    # Configuración TEA Profesional
     tea = bst.TEA(
         system=sys,
-        IRR=0.15,                           # Tasa deseada
-        duration=(2026, 2046),              # Horizonte temporal
-        depreciation='MACRS7',              # Estándar industrial
-        construction_schedule=(0.5, 0.5),   # Cronograma de 2 años
-        startup_months=3,                   # Tiempo de arranque
-        operating_days=330,                 # Tiempo efectivo anual
-        income_tax=0.30,                    # Tasa impositiva
-        lang_factor=4.0,                    # Factor de instalación
-        startup_FOCfrac=0.5,                
-        startup_VOCfrac=0.5,                
-        startup_salesfrac=0.5,              
-        WC_over_FCI=0.05,                   # Capital de trabajo
-        finance_interest=0.0,               
-        finance_years=0,                    
-        finance_fraction=0.0                
+        IRR=0.15,
+        duration=(2026, 2046),
+        depreciation='MACRS7',
+        construction_schedule=(0.5, 0.5),
+        startup_months=3,
+        operating_days=330,
+        income_tax=0.30,
+        lang_factor=4.0,
+        startup_FOCfrac=0.5,
+        startup_VOCfrac=0.5,
+        startup_salesfrac=0.5,
+        WC_over_FCI=0.05,
+        finance_interest=0.0,
+        finance_years=0,
+        finance_fraction=0.0
     )
     
     return sys, tea, V100.outs[0]
 
 # =================================================================
-# COMPONENTES DE LA BARRA LATERAL
+# INTERFAZ DE USUARIO
 # =================================================================
 with st.sidebar:
     st.header("⚙️ Parámetros de Proceso")
@@ -95,9 +97,6 @@ with st.sidebar:
     ia_tutor = st.toggle("Habilitar Modo Tutor IA", value=True)
     ejecutar = st.button("🚀 Iniciar Simulación", use_container_width=True)
 
-# =================================================================
-# RENDERIZADO DE RESULTADOS
-# =================================================================
 if ejecutar:
     params = {
         't_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100,
@@ -107,32 +106,26 @@ if ejecutar:
     try:
         sys, tea, prod = ejecutar_modelo_completo(params)
         
-        st.subheader("📦 Estado del Producto Final (Vapor)")
+        st.subheader("📦 Estado del Producto Final")
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Presión</div><div class="metric-value">{prod.P/101325:.2f} atm</div></div>', unsafe_allow_html=True)
         with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Temperatura</div><div class="metric-value">{prod.T-273.15:.1f} °C</div></div>', unsafe_allow_html=True)
-        with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo Másico</div><div class="metric-value">{prod.F_mass:.1f} kg/h</div></div>', unsafe_allow_html=True)
+        with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo</div><div class="metric-value">{prod.F_mass:.1f} kg/h</div></div>', unsafe_allow_html=True)
         with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">% Etanol</div><div class="metric-value">{prod.imass["Ethanol"]/prod.F_mass*100:.1f}%</div></div>', unsafe_allow_html=True)
 
-        st.subheader("📊 Análisis de Rentabilidad")
+        st.subheader("📊 Análisis Financiero")
         e1, e2, e3, e4 = st.columns(4)
-        
-        # Corrección de accesos a atributos para evitar error '_FOC'
         with e1: st.metric("NPV (VPN)", f"${tea.NPV/1e6:.2f} M")
         with e2: 
-            # ROI basado en Ventas Anuales e Inversión Total (TCI)
-            roi_val = (tea.sales - tea.AOC) / tea.TCI * 100 if tea.TCI != 0 else 0
-            st.metric("ROI", f"{roi_val:.1f}%")
+            roi = (tea.sales - tea.AOC) / tea.TCI * 100 if tea.TCI != 0 else 0
+            st.metric("ROI", f"{roi:.1f}%")
         with e3:
-            # Payback calculado mediante flujo de caja operativo
-            flujo_anual = tea.sales - tea.AOC
-            payback = tea.TCI / flujo_anual if flujo_anual > 0 else 0
+            payback = tea.TCI / (tea.sales - tea.AOC) if (tea.sales - tea.AOC) > 0 else 0
             st.metric("Payback", f"{payback:.1f} años")
         with e4:
-            # Precio Mínimo de Venta Sugerido (MPSP)
             st.metric("MPSP", f"${tea.solve_price(prod):.2f}/kg")
 
-        t1, t2 = st.tabs(["📝 Balances", "🤖 Tutor IA"])
+        t1, t2 = st.tabs(["📝 Datos Técnicos", "🤖 Tutor IA"])
         with t1:
             st.dataframe(sys.get_stream_table())
         
@@ -140,9 +133,8 @@ if ejecutar:
             if ia_tutor and "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 model = genai.GenerativeModel('gemini-2.5-pro')
-                contexto = f"Ingeniería Química: El NPV es {tea.NPV/1e6:.2f}M y el ROI es {roi_val:.1f}%."
-                response = model.generate_content(f"{contexto} Explica brevemente si el proyecto es viable.")
-                st.info(response.text)
-
+                contexto = f"Simulación Etanol: NPV={tea.NPV/1e6:.2f}M, ROI={roi:.1f}%."
+                res = model.generate_content(f"{contexto} Explica brevemente la viabilidad.")
+                st.info(res.text)
     except Exception as e:
-        st.error(f"Error en la simulación: {e}")
+        st.error(f"Error: {e}")
