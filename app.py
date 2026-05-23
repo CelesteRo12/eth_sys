@@ -79,7 +79,7 @@ def ejecutar_simulacion_tecnica(params):
         "P-510": {"T": f"{P510.outs[0].T-273.15:.1f} °C", "P": f"{P510.outs[0].P/101325:.2f} atm", "F": f"{P510.outs[0].F_mass:.1f} kg/h"}
     }
     
-    return sys, R410.outs[0], chems, datos_equipos
+    return sys, R410, chems, datos_equipos
 
 # =================================================================
 # COMPONENTE INTERACTIVO (SVG + JS)
@@ -181,8 +181,9 @@ with st.sidebar:
 
 if simular:
     params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
-    sys, prod, chems, datos_json = ejecutar_simulacion_tecnica(params)
+    sys, flash_unit, chems, datos_json = ejecutar_simulacion_tecnica(params)
     
+    prod = flash_unit.outs[0] # Corriente de vapor destilado
     st.subheader("🎯 Resultados de la Corriente de Destilado")
     c1, c2, c3, c4 = st.columns(4)
     pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
@@ -213,12 +214,9 @@ if simular:
         st.write("### ⚡ Balance de Energía (Equipos)")
         data_energia = []
         for u in sys.units:
-            # Corrección segura del Calor (Q): sumamos los duties de todas las utilidades térmicas vinculadas al equipo
             calor = 0.0
             if hasattr(u, 'heat_utilities') and u.heat_utilities:
                 calor = sum(hu.duty for hu in u.heat_utilities)
-            
-            # Corrección segura de la Potencia Eléctrica: validamos si posee el atributo power o asignamos 0.0
             potencia = u.power if hasattr(u, 'power') else 0.0
             
             data_energia.append({
@@ -240,11 +238,48 @@ if simular:
         if ia_tutor:
             if "GEMINI_API_KEY" in st.secrets:
                 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-                model = genai.GenerativeModel('gemini-2.5-pro')
-                pregunta = st.text_input("Pregunta al asistente sobre el balance energético o de masa:")
+                
+                # --- NUEVA CONFIGURACIÓN AVANZADA DE IA (CIENTÍFICA Y TÉCNICA) ---
+                instrucciones_sistema = (
+                    "Eres un Asistente de Inteligencia Artificial experto en Ingeniería Química, Termodinámica y "
+                    "Simulación de Procesos con BioSTEAM. Tu objetivo es responder preguntas con el máximo rigor técnico, "
+                    "respaldado por principios científicos demostrados (tales como las leyes de la termodinámica, relaciones "
+                    "de equilibrio líquido-vapor Ley de Raoult/Modified Raoult, balances de masa y energía, coeficientes de "
+                    "transferencia de calor, etc.). Debes interpretar de forma precisa los datos específicos de la simulación "
+                    "provistos en el contexto y usarlos para validar numéricamente tus justificaciones. Evita respuestas vagas o "
+                    "superficiales; utiliza terminología de ingeniería apropiada."
+                )
+                
+                model = genai.GenerativeModel(
+                    model_name='gemini-2.5-pro',
+                    system_instruction=instrucciones_sistema
+                )
+                
+                pregunta = st.text_input("Haz una pregunta científica o técnica sobre el balance y la simulación:")
+                
                 if pregunta:
-                    contexto_ia = f"Simulación BioSTEAM: Flash agua-etanol. Presión: {p_v100} Pa. Pureza obtenida: {pureza:.1f}%. "
-                    respuesta = model.generate_content(contexto_ia + pregunta)
-                    st.chat_message("assistant").write(respuesta.text)
+                    # Formatear el contexto técnico exacto para que la IA disponga de los datos de la corrida actual
+                    contexto_simulacion = f"""
+                    CONTEXTO DE LA SIMULACIÓN ACTUAL:
+                    - Mezcla Binaria: Agua-Etanol.
+                    - Parámetros de Operación Alimentación: Temp = {t_mosto} °C, Flujo Total = 1000 kg/h (Agua: 900 kg/h, Etanol: 100 kg/h).
+                    - Temperatura en Intercambiador V210: {t_w220} °C.
+                    - Presión de Operación del Tanque Flash (R410): {p_v100} Pa ({p_v100/101325:.3f} atm).
+                    - Resultados en el domo del Flash (Destilado Vapor):
+                      * Flujo Masico Total: {prod.F_mass:.2f} kg/h
+                      * Fracción Masica de Etanol (Pureza): {pureza/100:.4f} ({pureza:.2f} %)
+                      * Temperatura de Equilibrio en Flash: {prod.T - 273.15:.2f} °C
+                    - Resultados en los fondos del Flash (Líquido Residuo):
+                      * Flujo Masico Total: {flash_unit.outs[1].F_mass:.2f} kg/h
+                      * Fracción Masica de Etanol: {(flash_unit.outs[1].imass['Ethanol']/flash_unit.outs[1].F_mass if flash_unit.outs[1].F_mass > 0 else 0):.4f}
+                    - Datos de Energía Clave:
+                      * Carga térmica neta calculada en el Flash (R410): {sum(hu.duty for hu in flash_unit.heat_utilities) if flash_unit.heat_utilities else 0.0} kJ/h
+                    """
+                    
+                    prompt_final = f"{contexto_simulacion}\n\nPREGUNTA DEL USUARIO:\n{pregunta}"
+                    
+                    with st.spinner("Analizando fenómenos termodinámicos..."):
+                        respuesta = model.generate_content(prompt_final)
+                        st.chat_message("assistant").write(respuesta.text)
             else:
                 st.error("Error: Por favor configura la variable 'GEMINI_API_KEY' en el panel de Secrets de Streamlit.")
