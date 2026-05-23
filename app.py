@@ -79,7 +79,32 @@ def ejecutar_simulacion_tecnica(params):
         "P-510": {"T": f"{P510.outs[0].T-273.15:.1f} °C", "P": f"{P510.outs[0].P/101325:.2f} atm", "F": f"{P510.outs[0].F_mass:.1f} kg/h"}
     }
     
-    return sys, R410, chems, datos_equipos
+    # Extraer arrays limpios de datos para no guardar objetos BioSTEAM complejos en el State
+    resumen_materia = ""
+    for s in sys.streams:
+        resumen_materia += f"- Corriente '{s.ID}': T = {s.T-273.15:.1f}°C, P = {s.P/101325:.2f}atm, Flujo Total = {s.F_mass:.1f}kg/h (Agua: {s.imass['Water']:.1f}kg/h, Etanol: {s.imass['Ethanol']:.1f}kg/h)\n"
+    
+    resumen_energia = ""
+    for u in sys.units:
+        q_neto = sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0
+        p_elec = u.power if hasattr(u, 'power') else 0.0
+        resumen_energia += f"- Equipo '{u.ID}' ({type(u).__name__}): Calor Neto Q = {q_neto:,.1f} kJ/h, Potencia = {p_elec:.4f} kW\n"
+
+    prod = R410.outs[0]
+    pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
+
+    resultados_estaticos = {
+        "presion": f"{prod.P/101325:.2f} atm",
+        "temperatura": f"{prod.T-273.15:.1f} °C",
+        "flujo_vapor": f"{prod.F_mass:.1f} kg/h",
+        "pureza": f"{pureza:.1f} %",
+        "resumen_materia": resumen_materia,
+        "resumen_energia": resumen_energia,
+        "datos_materia_df": [{"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2), "Water": round(s.imass['Water'], 2), "Ethanol": round(s.imass['Ethanol'], 2)} for s in sys.streams],
+        "datos_energia_df": [{"Equipo": u.ID, "Tipo": type(u).__name__, "Calor Neto (Q) [kJ/h]": f"{(sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0):,.2f}", "Potencia Eléctrica [kW]": f"{(u.power if hasattr(u, 'power') else 0.0):.4f}"} for u in sys.units]
+    }
+    
+    return resultados_estaticos, datos_equipos
 
 # =================================================================
 # COMPONENTE INTERACTIVO (SVG + JS)
@@ -166,7 +191,7 @@ def render_interactive_diagram(datos_json):
     st.components.v1.html(svg_html, height=600)
 
 # =================================================================
-# INTERFAZ DE USUARIO PRINCIPAL
+# INTERFAZ DE USUARIO PRINCIPAL (BARRA LATERAL)
 # =================================================================
 with st.sidebar:
     st.header("⚙️ Parámetros Operativos")
@@ -179,60 +204,42 @@ with st.sidebar:
     ia_tutor = st.toggle("Asistente IA con Gemini", value=True)
     simular = st.button("🚀 Iniciar Simulación", use_container_width=True)
 
+# Lógica del clic: Si presiona el botón, se calcula y guarda en st.session_state
 if simular:
     params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
-    sys, flash_unit, chems, datos_json = ejecutar_simulacion_tecnica(params)
+    res_estaticos, json_equipos = ejecutar_simulacion_tecnica(params)
+    st.session_state.resultados = res_estaticos
+    st.session_state.json_equipos = json_equipos
+
+# =================================================================
+# RENDERIZADO ESTABLE DESDE EL SESSION_STATE
+# =================================================================
+if "resultados" in st.session_state:
+    res = st.session_state.resultados
     
-    prod = flash_unit.outs[0] # Corriente de vapor destilado
     st.subheader("🎯 Resultados de la Corriente de Destilado")
     c1, c2, c3, c4 = st.columns(4)
-    pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
-    
-    with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Presión</div><div class="metric-value">{prod.P/101325:.2f} atm</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Temperatura</div><div class="metric-value">{prod.T-273.15:.1f} °C</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo Vapor</div><div class="metric-value">{prod.F_mass:.1f} kg/h</div></div>', unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{pureza:.1f} %</div></div>', unsafe_allow_html=True)
+    with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Presión</div><div class="metric-value">{res["presion"]}</div></div>', unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Temperatura</div><div class="metric-value">{res["temperatura"]}</div></div>', unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo Vapor</div><div class="metric-value">{res["flujo_vapor"]}</div></div>', unsafe_allow_html=True)
+    with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{res["pureza"]}</div></div>', unsafe_allow_html=True)
 
     # Pestañas principales de los Datos e Instrumentación
     tab1, tab2 = st.tabs(["📊 Balances de Materia y Energía", "📐 Diagrama Interactivo (PFD)"])
     
     with tab1:
         st.write("### ⚖️ Balance de Materia (Corrientes)")
-        data_materia = []
-        c_ids = [c.ID for c in chems]
-        for s in sys.streams:
-            row = {"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2)}
-            for cid in c_ids: 
-                row[cid] = round(s.imass[cid], 2)
-            data_materia.append(row)
-        st.dataframe(pd.DataFrame(data_materia), use_container_width=True, hide_index=True)
-        
+        st.dataframe(pd.DataFrame(res["datos_materia_df"]), use_container_width=True, hide_index=True)
         st.divider()
-
         st.write("### ⚡ Balance de Energía (Equipos)")
-        data_energia = []
-        for u in sys.units:
-            calor = 0.0
-            if hasattr(u, 'heat_utilities') and u.heat_utilities:
-                calor = sum(hu.duty for hu in u.heat_utilities)
-            potencia = u.power if hasattr(u, 'power') else 0.0
-            
-            data_energia.append({
-                "Equipo": u.ID,
-                "Tipo": type(u).__name__,
-                "Calor Neto (Q) [kJ/h]": f"{calor:,.2f}",
-                "Potencia Eléctrica [kW]": f"{potencia:.4f}"
-            })
-        
-        df_energia = pd.DataFrame(data_energia)
-        st.dataframe(df_energia, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(res["datos_energia_df"]), use_container_width=True, hide_index=True)
     
     with tab2:
         st.info("💡 **Interacción:** Haz clic sobre cualquier equipo del diagrama para ver sus datos técnicos en tiempo real.")
-        render_interactive_diagram(datos_json)
+        render_interactive_diagram(st.session_state.json_equipos)
 
     # =================================================================
-    # PAN DE CONTEXTO / VENTANA DE CHAT DE ALTA VELOCIDAD (STREAMING)
+    # PANEL DE CONTEXTO / VENTANA DE CHAT PERSISTENTE CON STREAMING
     # =================================================================
     st.divider()
     if ia_tutor:
@@ -249,28 +256,17 @@ if simular:
                 "Debes justificar tus respuestas usando balances de masa, energía y relaciones de equilibrio líquido-vapor."
             )
             
-            # Compilar datos exactos de la corrida de simulación para conocimiento del modelo
-            resumen_materia = ""
-            for s in sys.streams:
-                resumen_materia += f"- Corriente '{s.ID}': T = {s.T-273.15:.1f}°C, P = {s.P/101325:.2f}atm, Flujo Total = {s.F_mass:.1f}kg/h (Agua: {s.imass['Water']:.1f}kg/h, Etanol: {s.imass['Ethanol']:.1f}kg/h)\n"
-            
-            resumen_energia = ""
-            for u in sys.units:
-                q_neto = sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0
-                p_elec = u.power if hasattr(u, 'power') else 0.0
-                resumen_energia += f"- Equipo '{u.ID}' ({type(u).__name__}): Calor Neto Q = {q_neto:,.1f} kJ/h, Potencia = {p_elec:.4f} kW\n"
-            
             contexto_simulacion = f"""
             [VALORES CALCULADOS POR LA SIMULACIÓN ACTUAL DE LA APLICACIÓN]
             **Balances de Materia (Corrientes):**
-            {resumen_materia}
+            {res["resumen_materia"]}
             
             **Balances de Energía (Equipos):**
-            {resumen_energia}
+            {res["resumen_energia"]}
             
             **Resultados de Desempeño Clave:**
-            - Pureza de Etanol en el Destilado (Domo R410): {pureza:.2f} %
-            - Temperatura de equilibrio en el Flash: {prod.T - 273.15:.1f} °C
+            - Pureza de Etanol en el Destilado (Domo R410): {res["pureza"]}
+            - Temperatura de equilibrio en el Flash: {res["temperatura"]}
             """
             
             # Inicializar el contenedor del historial de chat
@@ -283,7 +279,7 @@ if simular:
                     st.write(message["content"])
             
             # Caja de entrada para lenguaje natural
-            if pregunta := st.chat_input("Escribe tu duda técnica aquí (ej. ¿Por qué la pureza del etanol dió ese valor?):"):
+            if pregunta := st.chat_input("Escribe tu duda técnica aquí (ej. ¿Por qué la pureza del etanol dio ese valor?):"):
                 with st.chat_message("user"):
                     st.write(pregunta)
                 st.session_state.chat_history.append({"role": "user", "content": pregunta})
@@ -296,9 +292,8 @@ if simular:
                 
                 prompt_final = f"{contexto_simulacion}\n\nPregunta del Estudiante:\n{pregunta}"
                 
-                # Renderizar y escribir la respuesta de forma ultra rápida (Streaming)
+                # Renderizar la respuesta del tutor en tiempo real mediante Streaming
                 with st.chat_message("assistant"):
-                    # st.write_stream lee el generador y despliega el texto en tiempo real conforme llega de Google
                     def generar_stream():
                         response_stream = model.generate_content(prompt_final, stream=True)
                         for chunk in response_stream:
@@ -306,7 +301,9 @@ if simular:
                     
                     respuesta_completa = st.write_stream(generar_stream())
                 
-                # Guardar respuesta final en el historial para mantener el contexto vivo
                 st.session_state.chat_history.append({"role": "assistant", "content": respuesta_completa})
+                st.rerun() # Fuerza un redibujado limpio manteniendo la persistencia de los datos
         else:
             st.error("Error: Por favor configura la variable 'GEMINI_API_KEY' en el panel de Secrets de Streamlit.")
+else:
+    st.info("👋 ¡Bienvenido! Por favor, configura los parámetros en la barra lateral izquierda y haz clic en '🚀 Iniciar Simulación' para visualizar el proceso y hablar con el tutor.")
