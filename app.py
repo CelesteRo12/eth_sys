@@ -291,7 +291,7 @@ if simular:
                     
                     # Configuración del modelo Gemini
                     Model = genai.GenerativeModel(
-                        Model_name='gemini-1.5-flash',
+                        Model_name='gemini-2.5-pro',
                         System_instruction=instrucciones_sistema
                     )
                     
