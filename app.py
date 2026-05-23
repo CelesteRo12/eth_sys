@@ -24,7 +24,6 @@ st.markdown("""
     .metric-value { font-size: 24px; font-weight: bold; color: #1e293b; }
     .metric-label { font-size: 14px; color: #64748b; text-transform: uppercase; }
     
-    /* Estilos para el Info-Box del Diagrama */
     #info-box {
         position: absolute;
         background: rgba(255, 255, 255, 0.98);
@@ -57,24 +56,13 @@ def ejecutar_simulacion_tecnica(params):
     mosto = Stream('mosto', Water=900, Ethanol=100, units='kg/hr', 
                     T=params['t_mosto'] + 273.15)
     
-    # 4. Diseño de Equipos (Mapeo completo con el diagrama)
-    # P-100: Bomba de alimentación
+    # 4. Diseño de Equipos
     P100 = bst.Pump('P100', ins=mosto, P=4*101325)
-    
-    # V-210: Intercambiador de pre-calentamiento
     V210 = bst.HXutility('V210', ins=P100-0, T=params['t_w220'] + 273.15)
-    
-    # W-310: Calentador adicional
     W310 = bst.HXutility('W310', ins=V210-0, T=params['t_w220'] + 5 + 273.15)
-    
-    # R-410: Tanque Flash (Separador)
     R410 = bst.Flash('R410', ins=W310-0, outs=('vapor_prod', 'liquido_residuo'), 
-                     P=params['p_v100'], Q=0)
-    
-    # V-510: Condensador de vapor
+                      P=params['p_v100'], Q=0)
     V510 = bst.HXutility('V510', ins=R410-0, T=40 + 273.15, V=0)
-    
-    # P-510: Bomba de producto condensado
     P510 = bst.Pump('P510', ins=V510-0, P=101325)
     
     # Simular Sistema
@@ -97,7 +85,6 @@ def ejecutar_simulacion_tecnica(params):
 # COMPONENTE INTERACTIVO (SVG + JS)
 # =================================================================
 def render_interactive_diagram(datos_json):
-    # Inyectamos el SVG con eventos onclick para cada equipo
     svg_html = f"""
     <div id="svg-container" style="background: #f8fafc; border-radius: 15px; padding: 20px;">
         <svg viewBox="0 0 800 600" width="100%" height="100%" id="process-svg">
@@ -108,7 +95,8 @@ def render_interactive_diagram(datos_json):
             .label {{ font-family: 'Arial'; font-size: 14px; font-weight: bold; fill: #1e293b; pointer-events: none; }}
           </style>
 
-          <path class="pipe" d="M 50 150 L 125 150" /> <path class="pipe" d="M 175 150 L 250 150" /> <path class="pipe" d="M 350 150 L 375 150 L 375 250 L 325 250" /> <path class="pipe" d="M 300 275 L 300 350 L 375 350" /> <path class="pipe" d="M 425 350 L 525 350" /> <path class="pipe" d="M 400 430 L 400 480" /> <path class="pipe" d="M 575 350 L 650 350" /> <g id="P-100" class="equipment" onclick="showPopup(this, 'P-100')" transform="translate(150, 150)">
+          <path class="pipe" d="M 50 150 L 125 150" /> <path class="pipe" d="M 175 150 L 250 150" /> <path class="pipe" d="M 350 150 L 375 150 L 375 250 L 325 250" /> <path class="pipe" d="M 300 275 L 300 350 L 375 350" /> <path class="pipe" d="M 425 350 L 525 350" /> <path class="pipe" d="M 400 430 L 400 480" /> <path class="pipe" d="M 575 350 L 650 350" /> 
+          <g id="P-100" class="equipment" onclick="showPopup(this, 'P-100')" transform="translate(150, 150)">
             <circle cx="0" cy="0" r="25" />
             <polygon points="-10,-10 -10,10 15,0" fill="#000080"/>
             <text x="35" y="5" class="label">P-100</text>
@@ -192,11 +180,9 @@ with st.sidebar:
     simular = st.button("🚀 Iniciar Simulación", use_container_width=True)
 
 if simular:
-    # Ejecución
     params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
     sys, prod, chems, datos_json = ejecutar_simulacion_tecnica(params)
     
-    # Dashboards de Cabecera
     st.subheader("🎯 Resultados de la Corriente de Destilado")
     c1, c2, c3, c4 = st.columns(4)
     pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
@@ -207,17 +193,41 @@ if simular:
     with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{pureza:.1f} %</div></div>', unsafe_allow_html=True)
 
     # Pestañas de Visualización
-    tab1, tab2, tab3 = st.tabs(["📊 Balances de Materia", "📐 Diagrama Interactivo (PFD)", "🤖 Asistente Técnico IA"])
+    tab1, tab2, tab3 = st.tabs(["📊 Balances de Materia y Energía", "📐 Diagrama Interactivo (PFD)", "🤖 Asistente Técnico IA"])
     
     with tab1:
-        st.write("### Tabla de Corrientes del Proceso")
-        data_table = []
+        # --- BALANCE DE MATERIA ---
+        st.write("### ⚖️ Balance de Materia (Corrientes)")
+        data_materia = []
         c_ids = [c.ID for c in chems]
         for s in sys.streams:
-            row = {"ID": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": f"{s.F_mass:.1f}"}
-            for cid in c_ids: row[cid] = f"{s.imass[cid]:.1f}"
-            data_table.append(row)
-        st.dataframe(pd.DataFrame(data_table), use_container_width=True)
+            row = {"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2)}
+            for cid in c_ids: 
+                row[cid] = round(s.imass[cid], 2)
+            data_materia.append(row)
+        st.dataframe(pd.DataFrame(data_materia), use_container_width=True, hide_index=True)
+        
+        st.divider()
+
+        # --- BALANCE DE ENERGÍA ---
+        st.write("### ⚡ Balance de Energía (Equipos)")
+        data_energia = []
+        for u in sys.units:
+            # Obtener Calor (Q) en kJ/h
+            calor = u.duty / 1.0  # BioSTEAM duty está en kJ/hr por defecto
+            # Obtener Potencia (P) en kW
+            potencia = u.power    # BioSTEAM power está en kW
+            
+            data_energia.append({
+                "Equipo": u.ID,
+                "Tipo": type(u).__name__,
+                "Calor Netto (Q) [kJ/h]": f"{calor:,.2f}",
+                "Potencia Eléctrica [kW]": f"{potencia:.4f}"
+            })
+        
+        df_energia = pd.DataFrame(data_energia)
+        st.dataframe(df_energia, use_container_width=True, hide_index=True)
+        st.caption("Nota: Los valores negativos en Calor (Q) indican enfriamiento/cesión de energía, positivos indican calentamiento.")
     
     with tab2:
         st.info("💡 **Interacción:** Haz clic sobre cualquier equipo del diagrama para ver sus datos técnicos en tiempo real.")
@@ -230,7 +240,6 @@ if simular:
                 model = genai.GenerativeModel('gemini-2.5-pro')
                 pregunta = st.text_input("Pregunta al asistente sobre el balance energético o de masa:")
                 if pregunta:
-                    # Contexto enriquecido para la IA
                     contexto_ia = f"Simulación BioSTEAM: Flash agua-etanol. Presión: {p_v100} Pa. Pureza obtenida: {pureza:.1f}%. "
                     respuesta = model.generate_content(contexto_ia + pregunta)
                     st.chat_message("assistant").write(respuesta.text)
