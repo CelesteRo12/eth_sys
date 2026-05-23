@@ -168,25 +168,25 @@ def render_interactive_diagram(datos_json):
 # =================================================================
 # INTERFAZ DE USUARIO PRINCIPAL
 # =================================================================
-with St.sidebar:
-    St.header("⚙️ Parámetros Operativos")
+with st.sidebar:
+    st.header("⚙️ Parámetros Operativos")
     with st.expander("🌡️ Condiciones de Entrada", expanded=True):
-        T_mosto = st.slider("Temp. Alimentación (°C)", 10, 60, 25)
-        T_w220 = st.slider("Temp. Intercambiador (°C)", 70, 100, 92)
-        P_v100 = st.slider("Presión Flash (Pa)", 50000, 150000, 101325)
+        t_mosto = st.slider("Temp. Alimentación (°C)", 10, 60, 25)
+        t_w220 = st.slider("Temp. Intercambiador (°C)", 70, 100, 92)
+        p_v100 = st.slider("Presión Flash (Pa)", 50000, 150000, 101325)
     
-    St.divider()
-    Ia_tutor = st.toggle("Asistente IA con Gemini", value=True)
-    Simular = st.button("🚀 Iniciar Simulación", use_container_width=True)
+    st.divider()
+    ia_tutor = st.toggle("Asistente IA con Gemini", value=True)
+    simular = st.button("🚀 Iniciar Simulación", use_container_width=True)
 
 if simular:
-    Params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
-    Sys, flash_unit, chems, datos_json = ejecutar_simulacion_tecnica(params)
+    params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
+    sys, flash_unit, chems, datos_json = ejecutar_simulacion_tecnica(params)
     
-    Prod = flash_unit.outs[0] # Corriente de vapor destilado
-    St.subheader("🎯 Resultados de la Corriente de Destilado")
-    C1, c2, c3, c4 = st.columns(4)
-    Pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
+    prod = flash_unit.outs[0] # Corriente de vapor destilado
+    st.subheader("🎯 Resultados de la Corriente de Destilado")
+    c1, c2, c3, c4 = st.columns(4)
+    pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
     
     with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Presión</div><div class="metric-value">{prod.P/101325:.2f} atm</div></div>', unsafe_allow_html=True)
     with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Temperatura</div><div class="metric-value">{prod.T-273.15:.1f} °C</div></div>', unsafe_allow_html=True)
@@ -194,53 +194,53 @@ if simular:
     with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{pureza:.1f} %</div></div>', unsafe_allow_html=True)
 
     # Pestañas de Visualización
-    Tab1, tab2, tab3 = st.tabs(["📊 Balances de Materia y Energía", "📐 Diagrama Interactivo (PFD)", "🤖 Asistente Técnico IA"])
+    tab1, tab2, tab3 = st.tabs(["📊 Balances de Materia y Energía", "📐 Diagrama Interactivo (PFD)", "🤖 Asistente Técnico IA"])
     
     with tab1:
         # --- BALANCE DE MATERIA ---
-        St.write("### ⚖️ Balance de Materia (Corrientes)")
-        Data_materia = []
-        C_ids = [c.ID for c in chems]
-        For s in sys.streams:
-            Row = {"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2)}
-            For cid in c_ids: 
-                Row[cid] = round(s.imass[cid], 2)
-            Data_materia.append(row)
-        St.dataframe(pd.DataFrame(data_materia), use_container_width=True, hide_index=True)
+        st.write("### ⚖️ Balance de Materia (Corrientes)")
+        data_materia = []
+        c_ids = [c.ID for c in chems]
+        for s in sys.streams:
+            row = {"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2)}
+            for cid in c_ids: 
+                row[cid] = round(s.imass[cid], 2)
+            data_materia.append(row)
+        st.dataframe(pd.DataFrame(data_materia), use_container_width=True, hide_index=True)
         
-        St.divider()
+        st.divider()
 
         # --- BALANCE DE ENERGÍA ---
-        St.write("### ⚡ Balance de Energía (Equipos)")
-        Data_energia = []
-        For u in sys.units:
-            Calor = 0.0
-            If hasattr(u, 'heat_utilities') and u.heat_utilities:
-                Calor = sum(hu.duty for hu in u.heat_utilities)
-            Potencia = u.power if hasattr(u, 'power') else 0.0
+        st.write("### ⚡ Balance de Energía (Equipos)")
+        data_energia = []
+        for u in sys.units:
+            calor = 0.0
+            if hasattr(u, 'heat_utilities') and u.heat_utilities:
+                calor = sum(hu.duty for hu in u.heat_utilities)
+            potencia = u.power if hasattr(u, 'power') else 0.0
             
-            Data_energia.append({
+            data_energia.append({
                 "Equipo": u.ID,
                 "Tipo": type(u).__name__,
                 "Calor Neto (Q) [kJ/h]": f"{calor:,.2f}",
                 "Potencia Eléctrica [kW]": f"{potencia:.4f}"
             })
         
-        Df_energia = pd.DataFrame(data_energia)
-        St.dataframe(df_energia, use_container_width=True, hide_index=True)
-        St.caption("Nota: Los valores negativos en Calor (Q) indican enfriamiento/cesión de energía, positivos indican calentamiento.")
+        df_energia = pd.DataFrame(data_energia)
+        st.dataframe(df_energia, use_container_width=True, hide_index=True)
+        st.caption("Nota: Los valores negativos en Calor (Q) indican enfriamiento/cesión de energía, positivos indican calentamiento.")
     
     with tab2:
-        St.info("💡 **Interacción:** Haz clic sobre cualquier equipo del diagrama para ver sus datos técnicos en tiempo real.")
-        Render_interactive_diagram(datos_json)
+        st.info("💡 **Interacción:** Haz clic sobre cualquier equipo del diagrama para ver sus datos técnicos en tiempo real.")
+        render_interactive_diagram(datos_json)
 
     with tab3:
-        If ia_tutor:
-            If "GEMINI_API_KEY" in st.secrets:
-                Genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        if ia_tutor:
+            if "GEMINI_API_KEY" in st.secrets:
+                genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
                 
                 # Instrucción explícita del sistema para el comportamiento del tutor técnico
-                Instrucciones_sistema = (
+                instrucciones_sistema = (
                     "Eres un tutor de Inteligencia Artificial experto en Ingeniería de Procesos Químicos. "
                     "Tu labor es entablar una conversación en lenguaje natural con el estudiante. "
                     "Es obligatorio que expliques detalladamente los fenómenos físicos, químicos y termodinámicos "
@@ -249,18 +249,17 @@ if simular:
                 )
                 
                 # --- GENERAR CONTEXTO DINÁMICO EN TIEMPO REAL ---
-                # Compilar datos exactos de corrientes y unidades para transferírselos como conocimiento del sistema a Gemini
-                Resumen_materia = ""
-                For s in sys.streams:
-                    Resumen_materia += f"- Corriente '{s.ID}': T = {s.T-273.15:.1f}°C, P = {s.P/101325:.2f}atm, Flujo Total = {s.F_mass:.1f}kg/h (Agua: {s.imass['Water']:.1f}kg/h, Etanol: {s.imass['Ethanol']:.1f}kg/h)\n"
+                resumen_materia = ""
+                for s in sys.streams:
+                    resumen_materia += f"- Corriente '{s.ID}': T = {s.T-273.15:.1f}°C, P = {s.P/101325:.2f}atm, Flujo Total = {s.F_mass:.1f}kg/h (Agua: {s.imass['Water']:.1f}kg/h, Etanol: {s.imass['Ethanol']:.1f}kg/h)\n"
                 
-                Resumen_energia = ""
-                For u in sys.units:
-                    Q_neto = sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0
-                    P_elec = u.power if hasattr(u, 'power') else 0.0
-                    Resumen_energia += f"- Equipo '{u.ID}' ({type(u).__name__}): Calor Neto Q = {q_neto:,.1f} kJ/h, Potencia = {p_elec:.4f} kW\n"
+                resumen_energia = ""
+                for u in sys.units:
+                    q_neto = sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0
+                    p_elec = u.power if hasattr(u, 'power') else 0.0
+                    resumen_energia += f"- Equipo '{u.ID}' ({type(u).__name__}): Calor Neto Q = {q_neto:,.1f} kJ/h, Potencia = {p_elec:.4f} kW\n"
                 
-                Contexto_simulacion = f"""
+                contexto_simulacion = f"""
                 [VALORES CALCULADOS POR LA SIMULACIÓN ACTUAL DE LA APLICACIÓN]
                 **Balances de Materia (Corrientes):**
                 {resumen_materia}
@@ -274,36 +273,36 @@ if simular:
                 """
                 
                 # --- INICIALIZACIÓN DE LA VENTANA DE CHAT CON HISTORIAL ---
-                If "chat_history" not in st.session_state:
-                    St.session_state.chat_history = []
+                if "chat_history" not in st.session_state:
+                    st.session_state.chat_history = []
                 
                 # Renderizar mensajes anteriores del chat
-                For message in st.session_state.chat_history:
-                    With st.chat_message(message["role"]):
-                        St.write(message["content"])
+                for message in st.session_state.chat_history:
+                    with st.chat_message(message["role"]):
+                        st.write(message["content"])
                 
                 # Cuadro de entrada de texto en lenguaje natural para el usuario
-                If pregunta := st.chat_input("Pregúntale al tutor sobre los balances o el rendimiento del proceso:"):
+                if pregunta := st.chat_input("Pregúntale al tutor sobre los balances o el rendimiento del proceso:"):
                     # Mostrar la pregunta del usuario en el chat
-                    With st.chat_message("user"):
-                        St.write(pregunta)
-                    St.session_state.chat_history.append({"role": "user", "content": pregunta})
+                    with st.chat_message("user"):
+                        st.write(pregunta)
+                    st.session_state.chat_history.append({"role": "user", "content": pregunta})
                     
                     # Configuración del modelo Gemini
-                    Model = genai.GenerativeModel(
-                        Model_name='gemini-2.5-pro',
-                        System_instruction=instrucciones_sistema
+                    model = genai.GenerativeModel(
+                        model_name='gemini-2.5-pro',
+                        system_instruction=instrucciones_sistema
                     )
                     
                     # El prompt final fusiona el contexto de los valores calculados de la app junto a la consulta del usuario
-                    Prompt_final = f"{contexto_simulacion}\n\nPregunta del Estudiante:\n{pregunta}"
+                    prompt_final = f"{contexto_simulacion}\n\nPregunta del Estudiante:\n{pregunta}"
                     
-                    With st.spinner("El tutor está analizando los balances del proceso..."):
-                        Respuesta = model.generate_content(prompt_final)
+                    with st.spinner("El tutor está analizando los balances del proceso..."):
+                        respuesta = model.generate_content(prompt_final)
                         
                         # Mostrar la respuesta analítica del tutor
-                        With st.chat_message("assistant"):
-                            St.write(respuesta.text)
-                        St.session_state.chat_history.append({"role": "assistant", "content": respuesta.text})
-            Else:
-                St.error("Error: Por favor configura la variable 'GEMINI_API_KEY' en el panel de Secrets de Streamlit.")
+                        with st.chat_message("assistant"):
+                            st.write(respuesta.text)
+                        st.session_state.chat_history.append({"role": "assistant", "content": respuesta.text})
+            else:
+                st.error("Error: Por favor configura la variable 'GEMINI_API_KEY' en el panel de Secrets de Streamlit.")
