@@ -213,15 +213,18 @@ if simular:
         st.write("### ⚡ Balance de Energía (Equipos)")
         data_energia = []
         for u in sys.units:
-            # Obtener Calor (Q) en kJ/h
-            calor = u.duty / 1.0  # BioSTEAM duty está en kJ/hr por defecto
-            # Obtener Potencia (P) en kW
-            potencia = u.power    # BioSTEAM power está en kW
+            # Corrección segura del Calor (Q): sumamos los duties de todas las utilidades térmicas vinculadas al equipo
+            calor = 0.0
+            if hasattr(u, 'heat_utilities') and u.heat_utilities:
+                calor = sum(hu.duty for hu in u.heat_utilities)
+            
+            # Corrección segura de la Potencia Eléctrica: validamos si posee el atributo power o asignamos 0.0
+            potencia = u.power if hasattr(u, 'power') else 0.0
             
             data_energia.append({
                 "Equipo": u.ID,
                 "Tipo": type(u).__name__,
-                "Calor Netto (Q) [kJ/h]": f"{calor:,.2f}",
+                "Calor Neto (Q) [kJ/h]": f"{calor:,.2f}",
                 "Potencia Eléctrica [kW]": f"{potencia:.4f}"
             })
         
