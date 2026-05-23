@@ -21,6 +21,14 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         margin-bottom: 10px;
     }
+    .metric-card-econ {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 15px;
+        border-left: 5px solid #10b981;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 10px;
+    }
     .metric-value { font-size: 24px; font-weight: bold; color: #1e293b; }
     .metric-label { font-size: 14px; color: #64748b; text-transform: uppercase; }
     
@@ -42,7 +50,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =================================================================
-# LÓGICA DE SIMULACIÓN TÉCNICA (BIOSTEAM)
+# LÓGICA DE SIMULACIÓN TÉCNICA Y ECONÓMICA (BIOSTEAM)
 # =================================================================
 def ejecutar_simulacion_tecnica(params):
     # 1. Reiniciar Flowsheet
@@ -69,7 +77,7 @@ def ejecutar_simulacion_tecnica(params):
     sys = bst.System('sys_proceso', path=(P100, V210, W310, R410, V510, P510))
     sys.simulate()
     
-    # 5. Diccionario de Datos para JavaScript
+    # 5. Diccionario de Datos para JavaScript (PFD)
     datos_equipos = {
         "P-100": {"T": f"{P100.outs[0].T-273.15:.1f} °C", "P": f"{P100.outs[0].P/101325:.2f} atm", "F": f"{P100.outs[0].F_mass:.1f} kg/h"},
         "V-210": {"T": f"{V210.outs[0].T-273.15:.1f} °C", "P": f"{V210.outs[0].P/101325:.2f} atm", "F": f"{V210.outs[0].F_mass:.1f} kg/h"},
@@ -79,7 +87,39 @@ def ejecutar_simulacion_tecnica(params):
         "P-510": {"T": f"{P510.outs[0].T-273.15:.1f} °C", "P": f"{P510.outs[0].P/101325:.2f} atm", "F": f"{P510.outs[0].F_mass:.1f} kg/h"}
     }
     
-    # Extraer arrays limpios de datos para no guardar objetos BioSTEAM complejos en el State
+    # =================================================================
+    # EVALUACIÓN ECONÓMICA EN TIEMPO REAL
+    # =================================================================
+    prod = R410.outs[0]
+    pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
+    
+    # Materias primas y productos masicos
+    costo_mosto_total = mosto.F_mass * params['p_costo_mosto']
+    ingreso_etanol_total = prod.imass['Ethanol'] * params['p_precio_etanol']
+    
+    # Servicios auxiliares (Energía y Calor)
+    costo_electricidad_total = 0.0
+    costo_calentamiento_total = 0.0 # Vapor
+    costo_enfriamiento_total = 0.0  # Agua de enfriamiento
+    
+    for u in sys.units:
+        # Potencia eléctrica (kW) -> convertimos a costo por hora
+        if hasattr(u, 'power') and u.power > 0:
+            costo_electricidad_total += u.power * params['p_costo_luz']
+            
+        # Cargas térmicas (kJ/h)
+        if hasattr(u, 'heat_utilities') and u.heat_utilities:
+            for hu in u.heat_utilities:
+                if hu.duty > 0: # Requiere calentamiento (Vapor)
+                    # Convertir kJ a toneladas de vapor aproximadas o usar factor directo por MJ
+                    costo_calentamiento_total += (hu.duty / 1000) * params['p_costo_vapor']
+                elif hu.duty < 0: # Requiere enfriamiento (Agua)
+                    costo_enfriamiento_total += (abs(hu.duty) / 1000) * params['p_costo_agua']
+
+    costos_operativos = costo_mosto_total + costo_electricidad_total + costo_calentamiento_total + costo_enfriamiento_total
+    utilidad_neta = ingreso_etanol_total - costos_operativos
+
+    # Preparar resúmenes para la UI y la IA
     resumen_materia = ""
     for s in sys.streams:
         resumen_materia += f"- Corriente '{s.ID}': T = {s.T-273.15:.1f}°C, P = {s.P/101325:.2f}atm, Flujo Total = {s.F_mass:.1f}kg/h (Agua: {s.imass['Water']:.1f}kg/h, Etanol: {s.imass['Ethanol']:.1f}kg/h)\n"
@@ -90,18 +130,26 @@ def ejecutar_simulacion_tecnica(params):
         p_elec = u.power if hasattr(u, 'power') else 0.0
         resumen_energia += f"- Equipo '{u.ID}' ({type(u).__name__}): Calor Neto Q = {q_neto:,.1f} kJ/h, Potencia = {p_elec:.4f} kW\n"
 
-    prod = R410.outs[0]
-    pureza = (prod.imass['Ethanol'] / prod.F_mass * 100) if prod.F_mass > 0 else 0
-
     resultados_estaticos = {
         "presion": f"{prod.P/101325:.2f} atm",
         "temperatura": f"{prod.T-273.15:.1f} °C",
         "flujo_vapor": f"{prod.F_mass:.1f} kg/h",
         "pureza": f"{pureza:.1f} %",
+        "ingresos": f"${ingreso_etanol_total:,.2f} USD/h",
+        "costos": f"${costos_operativos:,.2f} USD/h",
+        "utilidad": f"${utilidad_neta:,.2f} USD/h",
+        "utilidad_raw": utilidad_neta,
         "resumen_materia": resumen_materia,
         "resumen_energia": resumen_energia,
         "datos_materia_df": [{"Corriente": s.ID, "T [°C]": f"{s.T-273.15:.1f}", "P [atm]": f"{s.P/101325:.2f}", "Total [kg/h]": round(s.F_mass, 2), "Water": round(s.imass['Water'], 2), "Ethanol": round(s.imass['Ethanol'], 2)} for s in sys.streams],
-        "datos_energia_df": [{"Equipo": u.ID, "Tipo": type(u).__name__, "Calor Neto (Q) [kJ/h]": f"{(sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0):,.2f}", "Potencia Eléctrica [kW]": f"{(u.power if hasattr(u, 'power') else 0.0):.4f}"} for u in sys.units]
+        "datos_energia_df": [{"Equipo": u.ID, "Tipo": type(u).__name__, "Calor Neto (Q) [kJ/h]": f"{(sum(hu.duty for hu in u.heat_utilities) if u.heat_utilities else 0.0):,.2f}", "Potencia Eléctrica [kW]": f"{(u.power if hasattr(u, 'power') else 0.0):.4f}"} for u in sys.units],
+        "desglose_economico": {
+            "Costo Mosto": costo_mosto_total,
+            "Costo Electricidad": costo_electricidad_total,
+            "Costo Vapor (Calentamiento)": costo_calentamiento_total,
+            "Costo Agua (Enfriamiento)": costo_enfriamiento_total,
+            "Ingreso Etanol": ingreso_etanol_total
+        }
     }
     
     return resultados_estaticos, datos_equipos
@@ -199,14 +247,27 @@ with st.sidebar:
         t_mosto = st.slider("Temp. Alimentación (°C)", 10, 60, 25)
         t_w220 = st.slider("Temp. Intercambiador (°C)", 70, 100, 92)
         p_v100 = st.slider("Presión Flash (Pa)", 50000, 150000, 101325)
+        
+    st.header("💰 Costos y Mercado")
+    with st.expander("💸 Precios de Insumos y Servicios", expanded=True):
+        p_costo_luz = st.slider("Precio de la Luz ($/kWh)", 0.05, 0.50, 0.12, step=0.01)
+        p_costo_vapor = st.slider("Precio del Vapor ($/MJ)", 0.01, 0.10, 0.03, step=0.005)
+        p_costo_agua = st.slider("Precio del Agua ($/MJ)", 0.005, 0.05, 0.01, step=0.005)
+        p_costo_mosto = st.slider("Precio del Mosto ($/kg)", 0.10, 2.00, 0.40, step=0.05)
+        p_precio_etanol = st.slider("Precio del Etanol Puro ($/kg)", 1.00, 5.00, 2.50, step=0.10)
     
     st.divider()
     ia_tutor = st.toggle("Asistente IA con Gemini", value=True)
     simular = st.button("🚀 Iniciar Simulación", use_container_width=True)
 
-# Lógica del clic: Si presiona el botón, se calcula y guarda en st.session_state
+# Capturar clics y almacenar todo en st.session_state
 if simular:
-    params = {'t_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100}
+    params = {
+        't_mosto': t_mosto, 't_w220': t_w220, 'p_v100': p_v100,
+        'p_costo_luz': p_costo_luz, 'p_costo_vapor': p_costo_vapor,
+        'p_costo_agua': p_costo_agua, 'p_costo_mosto': p_costo_mosto,
+        'p_precio_etanol': p_precio_etanol
+    }
     res_estaticos, json_equipos = ejecutar_simulacion_tecnica(params)
     st.session_state.resultados = res_estaticos
     st.session_state.json_equipos = json_equipos
@@ -217,22 +278,39 @@ if simular:
 if "resultados" in st.session_state:
     res = st.session_state.resultados
     
-    st.subheader("🎯 Resultados de la Corriente de Destilado")
+    # --- FILA DE MÉTRICAS TÉCNICAS ---
+    st.subheader("🎯 Resultados Técnicos (Destilado)")
     c1, c2, c3, c4 = st.columns(4)
     with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Presión</div><div class="metric-value">{res["presion"]}</div></div>', unsafe_allow_html=True)
     with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Temperatura</div><div class="metric-value">{res["temperatura"]}</div></div>', unsafe_allow_html=True)
     with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Flujo Vapor</div><div class="metric-value">{res["flujo_vapor"]}</div></div>', unsafe_allow_html=True)
     with c4: st.markdown(f'<div class="metric-card"><div class="metric-label">Pureza Etanol</div><div class="metric-value">{res["pureza"]}</div></div>', unsafe_allow_html=True)
 
+    # --- FILA DE MÉTRICAS ECONÓMICAS ---
+    st.subheader("📈 Rendimiento Financiero del Proceso")
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1: st.markdown(f'<div class="metric-card-econ"><div class="metric-label">Ingresos estimados</div><div class="metric-value" style="color:#059669;">{res["ingresos"]}</div></div>', unsafe_allow_html=True)
+    with ec2: st.markdown(f'<div class="metric-card-econ"><div class="metric-label">Costos Operativos totales</div><div class="metric-value" style="color:#dc2626;">{res["costos"]}</div></div>', unsafe_allow_html=True)
+    
+    # Dar color dinámico a la utilidad (Rojo si hay pérdidas, verde si hay ganancias)
+    color_utilidad = "#059669" if res["utilidad_raw"] >= 0 else "#dc2626"
+    with ec3: st.markdown(f'<div class="metric-card-econ" style="border-left-color:{color_utilidad};"><div class="metric-label">Utilidad Neta</div><div class="metric-value" style="color:{color_utilidad};">{res["utilidad"]}</div></div>', unsafe_allow_html=True)
+
     # Pestañas principales de los Datos e Instrumentación
-    tab1, tab2 = st.tabs(["📊 Balances de Materia y Energía", "📐 Diagrama Interactivo (PFD)"])
+    tab1, tab2 = st.tabs(["📊 Balances de Materia, Energía y Costos", "📐 Diagrama Interactivo (PFD)"])
     
     with tab1:
         st.write("### ⚖️ Balance de Materia (Corrientes)")
         st.dataframe(pd.DataFrame(res["datos_materia_df"]), use_container_width=True, hide_index=True)
+        
         st.divider()
         st.write("### ⚡ Balance de Energía (Equipos)")
         st.dataframe(pd.DataFrame(res["datos_energia_df"]), use_container_width=True, hide_index=True)
+        
+        st.divider()
+        st.write("### 💸 Desglose de Costos por Hora ($ USD/h)")
+        df_costos = pd.DataFrame([{"Concepto": k, "Valor ($ USD/h)": f"${v:,.2f}"} for k, v in res["desglose_economico"].items()])
+        st.dataframe(df_costos, use_container_width=True, hide_index=True)
     
     with tab2:
         st.info("💡 **Interacción:** Haz clic sobre cualquier equipo del diagrama para ver sus datos técnicos en tiempo real.")
@@ -243,17 +321,17 @@ if "resultados" in st.session_state:
     # =================================================================
     st.divider()
     if ia_tutor:
-        st.subheader("🤖 Tutoría de Procesos en Tiempo Real")
+        st.subheader("🤖 Tutoría Técnico-Económica en Tiempo Real")
         
         if "GEMINI_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
             
             instrucciones_sistema = (
-                "Eres un tutor de Inteligencia Artificial experto en Ingeniería de Procesos Químicos. "
+                "Eres un tutor de Inteligencia Artificial experto en Ingeniería de Procesos Químicos y Análisis Económico de Plantas. "
                 "Tu labor es entablar una conversación en lenguaje natural con el estudiante. "
-                "Es obligatorio que expliques detalladamente los fenómenos físicos, químicos y termodinámicos "
-                "del proceso usando estrictamente los valores numéricos calculados por la simulación que se te proveen en el contexto. "
-                "Debes justificar tus respuestas usando balances de masa, energía y relaciones de equilibrio líquido-vapor."
+                "Es obligatorio que expliques detalladamente los fenómenos físicos, químicos, termodinámicos y viabilidades financieras "
+                "del proceso usando estrictamente los valores numéricos calculados por la simulación (técnicos y de costos) que se te proveen en el contexto. "
+                "Debes justificar tus respuestas usando balances de masa, costos operativos, ingresos por producto y relaciones de rentabilidad."
             )
             
             contexto_simulacion = f"""
@@ -264,27 +342,29 @@ if "resultados" in st.session_state:
             **Balances de Energía (Equipos):**
             {res["resumen_energia"]}
             
-            **Resultados de Desempeño Clave:**
+            **Resultados Financieros de Operación:**
+            - Ingresos Totales por Venta de Etanol: {res["ingresos"]}
+            - Costos Totales de Operación (Materia prima + Servicios Auxiliares): {res["costos"]}
+            - Utilidad Bruta del Sistema: {res["utilidad"]}
+            - Desglose de flujo de efectivo detallado: {json.dumps(res["desglose_economico"])}
+            
+            **Resultados de Desempeño Técnico Clave:**
             - Pureza de Etanol en el Destilado (Domo R410): {res["pureza"]}
             - Temperatura de equilibrio en el Flash: {res["temperatura"]}
             """
             
-            # Inicializar el contenedor del historial de chat
             if "chat_history" not in st.session_state:
                 st.session_state.chat_history = []
             
-            # Mostrar el historial completo de mensajes retenido en memoria
             for message in st.session_state.chat_history:
                 with st.chat_message(message["role"]):
                     st.write(message["content"])
             
-            # Caja de entrada para lenguaje natural
-            if pregunta := st.chat_input("Escribe tu duda técnica aquí (ej. ¿Por qué la pureza del etanol dio ese valor?):"):
+            if pregunta := st.chat_input("Pregúntale al tutor (ej. ¿El proceso es rentable con estos precios de servicios auxiliares?):"):
                 with st.chat_message("user"):
                     st.write(pregunta)
                 st.session_state.chat_history.append({"role": "user", "content": pregunta})
                 
-                # Configuración del modelo Gemini
                 model = genai.GenerativeModel(
                     model_name='gemini-2.5-pro',
                     system_instruction=instrucciones_sistema
@@ -292,7 +372,6 @@ if "resultados" in st.session_state:
                 
                 prompt_final = f"{contexto_simulacion}\n\nPregunta del Estudiante:\n{pregunta}"
                 
-                # Renderizar la respuesta del tutor en tiempo real mediante Streaming
                 with st.chat_message("assistant"):
                     def generar_stream():
                         response_stream = model.generate_content(prompt_final, stream=True)
@@ -302,8 +381,8 @@ if "resultados" in st.session_state:
                     respuesta_completa = st.write_stream(generar_stream())
                 
                 st.session_state.chat_history.append({"role": "assistant", "content": respuesta_completa})
-                st.rerun() # Fuerza un redibujado limpio manteniendo la persistencia de los datos
+                st.rerun()
         else:
             st.error("Error: Por favor configura la variable 'GEMINI_API_KEY' en el panel de Secrets de Streamlit.")
 else:
-    st.info("👋 ¡Bienvenido! Por favor, configura los parámetros en la barra lateral izquierda y haz clic en '🚀 Iniciar Simulación' para visualizar el proceso y hablar con el tutor.")
+    st.info("👋 ¡Bienvenido! Por favor, configura los parámetros operativos y los costos de mercado en la barra lateral izquierda y haz clic en '🚀 Iniciar Simulación'.")
